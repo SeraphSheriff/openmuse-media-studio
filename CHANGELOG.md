@@ -1,5 +1,18 @@
 # Changelog
 
+## [Media Studio 0.2.0] - 2026-11-13
+
+### Added
+
+- **1-Click Live Cloud / Local Model & VRAM Switcher:** Added top-header status pill (`Gemini` -> `Qwen Q4` -> `Qwen Q5`) backed by `/api/model-settings` and `apps/server/src/model-settings.ts` to spawn, swap, and stop local `llama-server` (`llama.cpp`) GGUF models on demand.
+- **Notification Delete & Clear All:** Added `POST /notifications/:id/delete` and `POST /notifications/clear` endpoints along with individual **Delete** and bulk **Clear all** controls in the Notifications sheet.
+- **Clear Main Chat & Avatar Placeholder Sheet:** Added **Clear main chat** button in the sidebar menu and an **Agent Avatar** customization sheet when clicking the header avatar.
+
+### Fixed
+
+- **Apps Screen Dark Mode Consistency:** Synced `s.listCard`, `s.card`, and Apps integration card containers to active theme colors in Dark Mode.
+- **Gemini Stream Retry & Tool Replay Reliability:** Trimmed incomplete trailing assistant turns before retrying Gemini requests and preserved `thought_signature` across multi-turn tool calls.
+
 ## [Media Studio 1.0.0] - 2026-11-13
 ### Added
 - **ComfyUI Video Studio UI (`≡ -> Video studio`):** Schema-driven modal exposing 29 live node-level parameters saved to `video-defaults.json`.
