@@ -29,3 +29,4 @@ data/
 .env*
 .copilotkit/
 *.bak
+model-settings.json
