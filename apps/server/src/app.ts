@@ -1,3 +1,4 @@
+import { readModelSettings, writeModelSettings } from "./model-settings.ts";
 import {
   DEFAULT_VIDEO_SETTINGS,
   readVideoSettings,
@@ -384,6 +385,21 @@ export async function createApp(
       }),
     );
     return new Response(body, { status: response.status, headers: response.headers });
+  });
+  app.get("/api/model-settings", async (c) => c.json(await readModelSettings()));
+  app.post("/api/model-settings", async (c) => {
+    const body = z
+      .object({
+        mode: z.enum(["cloud", "q4", "q5"]).optional(),
+        q4Model: z.string().min(1).max(200).optional(),
+        q4ModelPath: z.string().min(1).max(400).optional(),
+        q4BaseUrl: z.string().min(1).max(300).optional(),
+        q5Model: z.string().min(1).max(200).optional(),
+        q5ModelPath: z.string().min(1).max(400).optional(),
+        q5BaseUrl: z.string().min(1).max(300).optional(),
+      })
+      .parse(await c.req.json());
+    return c.json(await writeModelSettings(body));
   });
   app.get("/api/video-settings", async (c) =>
     c.json({ settings: await readVideoSettings(), schema: STUDIO_SCHEMA }),

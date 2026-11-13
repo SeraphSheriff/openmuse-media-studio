@@ -125,7 +125,15 @@ export function tanstackAgent(options: {
     type: "tanstack",
     factory: ({ input, abortController }) => {
       const converted = convertInputToTanStackAI(input);
-      const messages = converted.messages.map((msg) =>
+      const rawMessages = converted.messages.slice();
+      while (
+        rawMessages.length > 1 &&
+        rawMessages[rawMessages.length - 1]?.role === "assistant" &&
+        !(rawMessages[rawMessages.length - 1] as { toolCalls?: unknown[] }).toolCalls?.length
+      ) {
+        rawMessages.pop();
+      }
+      const messages = rawMessages.map((msg) =>
         msg.role === "assistant" && Array.isArray(msg.toolCalls) && msg.toolCalls.length > 0
           ? {
               ...msg,

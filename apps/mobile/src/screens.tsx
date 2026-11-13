@@ -1264,7 +1264,15 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
                   : "Connected"
                 : "Available integrations"}
             </Text>
-            <View style={{ paddingHorizontal: 16, borderRadius: 23, backgroundColor: "#F3F4F5" }}>
+            <View
+              style={{
+                paddingHorizontal: 16,
+                borderRadius: 23,
+                backgroundColor: colors.card,
+                borderWidth: 1,
+                borderColor: colors.line,
+              }}
+            >
               {group.map((row, index) => (
                 <Pressable
                   key={row.id}
@@ -1279,7 +1287,7 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
                       gap: 14,
                       minHeight: 61,
                       borderBottomWidth: index < group.length - 1 ? 1 : 0,
-                      borderBottomColor: "#E5E7E9",
+                      borderBottomColor: colors.line,
                     },
                   ]}
                 >

@@ -1683,6 +1683,20 @@ export function NotificationsSheet() {
       setError(errorText(e));
     }
   }
+  async function remove(id: string) {
+    try {
+      await mutate(`/notifications/${id}/delete`, {});
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }
+  async function clearAll() {
+    try {
+      await mutate("/notifications/clear", {});
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }
   return (
     <Sheet
       title="Notifications"
@@ -1691,6 +1705,14 @@ export function NotificationsSheet() {
     >
       <View style={{ gap: 14 }}>
         <ErrorNotice error={error} />
+        {!!data?.notifications.length && (
+          <View style={s.between}>
+            <Text style={s.small}>{data.notifications.length} notification(s)</Text>
+            <Button small danger onPress={() => void clearAll()}>
+              Clear all
+            </Button>
+          </View>
+        )}
         {data?.notifications.map((item) => (
           <Card
             key={item.id}
@@ -1702,9 +1724,14 @@ export function NotificationsSheet() {
             </View>
             <Text style={s.muted}>{item.body}</Text>
             <Text style={s.small}>{stamp(item.createdAt)}</Text>
-            <Button small onPress={() => void read(item.id, item.taskId)}>
-              {item.taskId ? "View task" : item.read ? "Read" : "Mark read"}
-            </Button>
+            <View style={[s.row, { gap: 8 }]}>
+              <Button small onPress={() => void read(item.id, item.taskId)}>
+                {item.taskId ? "View task" : item.read ? "Read" : "Mark read"}
+              </Button>
+              <Button small danger onPress={() => void remove(item.id)}>
+                Delete
+              </Button>
+            </View>
           </Card>
         ))}
         {!data?.notifications.length && (
@@ -1792,7 +1819,7 @@ export function AppsScreen() {
       />
       <ConnectionsScreen query={query} />
       <Text style={s.heading}>On your computer</Text>
-      <Card style={{ paddingVertical: 3, backgroundColor: "#F4F5F6" }}>
+      <Card style={{ paddingVertical: 3, backgroundColor: colors.card }}>
         {shortcuts
           .filter((item) =>
             `${item.title} ${item.detail}`.toLowerCase().includes(query.toLowerCase()),

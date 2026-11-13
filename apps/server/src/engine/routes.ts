@@ -158,6 +158,18 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
     if (!notification) throw new AppError("Notification not found", 404);
     return c.json(notification);
   });
+  app.post("/notifications/:id/delete", async (c) => {
+    await service.db.remove(c.get("owner"), "notifications", c.req.param("id"));
+    return c.json({ ok: true });
+  });
+  app.post("/notifications/clear", async (c) => {
+    const owner = c.get("owner");
+    const items = await service.db.list<AgentNotification>(owner, "notifications");
+    for (const item of items) {
+      await service.db.remove(owner, "notifications", item.id);
+    }
+    return c.json({ ok: true, deleted: items.length });
+  });
   app.post("/sample-page", async (c) => {
     if (service.config.mode !== "sample") throw new AppError("Not found", 404);
     const body = z.object({ text: z.string().max(100000) }).parse(await c.req.json());

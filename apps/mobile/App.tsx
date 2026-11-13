@@ -40,7 +40,7 @@ import { Details } from "./src/details";
 import { BrowserScreen, CalendarScreen, FilesScreen, MailScreen } from "./src/screens";
 import { useThemeMode } from "./src/theme";
 import { ThreadsProvider, ThreadsSheet, useMuseThread } from "./src/threads";
-import { Button, Card, colors, ErrorNotice, Field, IconButton, Mascot, s } from "./src/ui";
+import { Button, Card, colors, ErrorNotice, Field, IconButton, Mascot, Sheet, s } from "./src/ui";
 import { VideoSettingsModal } from "./src/VideoSettingsModal";
 import { type Detail, useWorkspace, WorkspaceContext } from "./src/workspace";
 
@@ -243,7 +243,7 @@ function WorkspaceShell({
   prompt?: { id: number; text: string };
 }) {
   useThemeMode();
-  const { workspace, section, navigate, open } = useWorkspace();
+  const { api, workspace, section, navigate, open } = useWorkspace();
   const { data } = useAgentWorkspace();
   const {
     selection,
@@ -256,6 +256,36 @@ function WorkspaceShell({
   } = useMuseThread();
   const [threadsOpen, setThreadsOpen] = useState(false);
   const [videoSettingsOpen, setVideoSettingsOpen] = useState(false);
+  const [avatarSheetOpen, setAvatarSheetOpen] = useState(false);
+  const [modelMode, setModelMode] = useState<"cloud" | "q4" | "q5">("cloud");
+  const [modelBusy, setModelBusy] = useState(false);
+  useEffect(() => {
+    void api
+      .request<{ mode?: "cloud" | "q4" | "q5" }>("/api/model-settings")
+      .then((data) => {
+        if (data?.mode === "cloud" || data?.mode === "q4" || data?.mode === "q5") {
+          setModelMode(data.mode);
+        }
+      })
+      .catch(() => {});
+  }, [api]);
+  async function toggleModelMode() {
+    if (modelBusy) return;
+    const next = modelMode === "cloud" ? "q4" : modelMode === "q4" ? "q5" : "cloud";
+    setModelBusy(true);
+    try {
+      const saved = await api.request<{ mode?: "cloud" | "q4" | "q5" }>("/api/model-settings", {
+        mode: next,
+      });
+      if (saved?.mode === "cloud" || saved?.mode === "q4" || saved?.mode === "q5") {
+        setModelMode(saved.mode);
+      }
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Could not switch model");
+    } finally {
+      setModelBusy(false);
+    }
+  }
   const { width } = useWindowDimensions();
   const desktop = width >= 900;
   const pending =
@@ -305,18 +335,73 @@ function WorkspaceShell({
               marginHorizontal: 20,
             }}
           >
-            <View style={{ position: "absolute", left: 0, top: 16 }}>
+            <View style={{ position: "absolute", left: 0, top: 16, zIndex: 10 }}>
               <IconButton
                 icon={Menu}
                 label="Open conversations and menu"
                 onPress={() => setThreadsOpen(true)}
               />
             </View>
+            <View
+              style={{
+                position: "absolute",
+                left: "25%",
+                top: 19,
+                transform: [{ translateX: -46 }],
+                zIndex: 10,
+              }}
+            >
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  modelMode === "q4"
+                    ? "Active model: Qwen Q4_K_M (tap to switch to Qwen Q5_K_M)"
+                    : modelMode === "q5"
+                      ? "Active model: Qwen Q5_K_M (tap to switch to Gemini Cloud)"
+                      : "Active model: Gemini Cloud (tap to switch to Qwen Q4_K_M)"
+                }
+                onPress={() => void toggleModelMode()}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 6,
+                  paddingHorizontal: 10,
+                  height: 34,
+                  borderRadius: 17,
+                  backgroundColor: colors.card,
+                  borderWidth: 1,
+                  borderColor: modelMode !== "cloud" ? colors.blueDark : colors.line,
+                }}
+              >
+                <View
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: 4,
+                    backgroundColor:
+                      modelMode === "q5"
+                        ? "#10B981"
+                        : modelMode === "q4"
+                          ? colors.blueDark
+                          : colors.muted,
+                  }}
+                />
+                <Text style={{ fontSize: 12, fontWeight: "600", color: colors.text }}>
+                  {modelBusy
+                    ? "Switching…"
+                    : modelMode === "q4"
+                      ? "Qwen Q4"
+                      : modelMode === "q5"
+                        ? "Qwen Q5"
+                        : "Gemini"}
+                </Text>
+              </Pressable>
+            </View>
             <View pointerEvents="box-none" style={{ alignItems: "center", gap: 1 }}>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`Open ${agentName} activity and approvals`}
-                onPress={() => navigate("activity")}
+                accessibilityLabel={`Customize ${agentName} avatar`}
+                onPress={() => setAvatarSheetOpen(true)}
                 style={({ pressed }) => ({
                   alignItems: "center",
                   maxWidth: "70%",
@@ -512,6 +597,22 @@ function WorkspaceShell({
           />
         )}
         {videoSettingsOpen && <VideoSettingsModal onClose={() => setVideoSettingsOpen(false)} />}
+        {avatarSheetOpen && (
+          <Sheet
+            title="Agent Avatar"
+            subtitle="Future enhancement"
+            onClose={() => setAvatarSheetOpen(false)}
+          >
+            <Card style={{ gap: 10 }}>
+              <Text style={s.heading}>In-app avatar upload coming soon</Text>
+              <Text style={s.muted}>
+                A future update will let you upload or generate a custom avatar directly from this
+                panel. Until then, you can swap the image file at apps/mobile/assets/capybara.png
+                and restart OpenMuse.
+              </Text>
+            </Card>
+          </Sheet>
+        )}
         {detail && (
           <Details
             key={

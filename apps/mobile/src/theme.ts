@@ -79,6 +79,14 @@ export function syncStyles(
     s.card.borderColor = c.line;
   }
   if (s.divider) s.divider.backgroundColor = c.line;
+  if (s.listCard) {
+    s.listCard.backgroundColor = c.card;
+    s.listCard.borderColor = c.line;
+  }
+  if (s.card) {
+    s.card.backgroundColor = c.card;
+    s.card.borderColor = c.line;
+  }
   if (s.error) {
     s.error.backgroundColor = c.errorBg;
     s.error.borderColor = c.errorBorder;
