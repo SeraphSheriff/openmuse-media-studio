@@ -121,7 +121,12 @@ export function BrowserToolCard({
         <Image
           accessibilityLabel={`Browser preview: ${visited?.title}`}
           source={{ uri: api.url(preview) }}
-          style={{ width: "100%", aspectRatio: 1.7, borderRadius: 12, backgroundColor: colors.card }}
+          style={{
+            width: "100%",
+            aspectRatio: 1.7,
+            borderRadius: 12,
+            backgroundColor: colors.card,
+          }}
           resizeMode="contain"
           onError={() => setPreviewFailed(true)}
         />

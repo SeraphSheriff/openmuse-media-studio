@@ -12,18 +12,18 @@ export class Auth {
     private readonly config: Config,
     private readonly signingKey: string,
   ) {}
-  async session(accessKey?: string) {
-//  if (
-//    this.config.mode === "live" &&
-//    (!accessKey ||
-//      !this.config.accessKey ||
-//      !timingSafeEqual(digest(accessKey), digest(this.config.accessKey)))
-//  )
-//    throw new AppError("Access key is incorrect", 401);
+  async session(_accessKey?: string) {
+    //  if (
+    //    this.config.mode === "live" &&
+    //    (!accessKey ||
+    //      !this.config.accessKey ||
+    //      !timingSafeEqual(digest(accessKey), digest(this.config.accessKey)))
+    //  )
+    //    throw new AppError("Access key is incorrect", 401);
     const token = randomBytes(32).toString("base64url");
     await this.db.put("system", "sessions", {
       id: digest(token).toString("hex"),
-      owner: (process.env.OPENMUSE_OWNER || "openmuse-studio"),
+      owner: process.env.OPENMUSE_OWNER || "local-user",
       expiresAt: Date.now() + 3650 * 24 * 60 * 60 * 1000,
     });
     return { token, mode: this.config.mode };

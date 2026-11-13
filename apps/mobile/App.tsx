@@ -39,9 +39,9 @@ import { ComputerDraftProvider } from "./src/computer-drafts";
 import { Details } from "./src/details";
 import { BrowserScreen, CalendarScreen, FilesScreen, MailScreen } from "./src/screens";
 import { useThemeMode } from "./src/theme";
-import { VideoSettingsModal } from "./src/VideoSettingsModal";
 import { ThreadsProvider, ThreadsSheet, useMuseThread } from "./src/threads";
 import { Button, Card, colors, ErrorNotice, Field, IconButton, Mascot, s } from "./src/ui";
+import { VideoSettingsModal } from "./src/VideoSettingsModal";
 import { type Detail, useWorkspace, WorkspaceContext } from "./src/workspace";
 
 const nav: { id: Section; label: string; icon: LucideIcon }[] = [
@@ -505,7 +505,12 @@ function WorkspaceShell({
             </View>
           </View>
         )}
-        {threadsOpen && <ThreadsSheet onClose={() => setThreadsOpen(false)} onOpenVideoStudio={() => setVideoSettingsOpen(true)} />}
+        {threadsOpen && (
+          <ThreadsSheet
+            onClose={() => setThreadsOpen(false)}
+            onOpenVideoStudio={() => setVideoSettingsOpen(true)}
+          />
+        )}
         {videoSettingsOpen && <VideoSettingsModal onClose={() => setVideoSettingsOpen(false)} />}
         {detail && (
           <Details

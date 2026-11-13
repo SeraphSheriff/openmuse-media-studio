@@ -84,7 +84,12 @@ export function BrowserThreadCard({ browser }: { browser: BrowserSession }) {
         <Image
           accessibilityLabel={`Browser preview: ${browser.title}`}
           source={{ uri: browser.previewUrl }}
-          style={{ width: "100%", aspectRatio: 1.6, borderRadius: 11, backgroundColor: colors.card }}
+          style={{
+            width: "100%",
+            aspectRatio: 1.6,
+            borderRadius: 11,
+            backgroundColor: colors.card,
+          }}
           resizeMode="contain"
           onError={() => setFailed(true)}
         />

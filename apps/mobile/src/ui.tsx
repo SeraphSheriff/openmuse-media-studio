@@ -1,4 +1,3 @@
-import { activePalette, setDarkMode as applyTheme, syncStyles } from "./theme";
 import { ArrowUpRight, Check, ChevronRight, type LucideIcon, X } from "lucide-react-native";
 import type { ReactNode } from "react";
 import {
@@ -16,8 +15,15 @@ import {
   type ViewStyle,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { activePalette, setDarkMode as applyTheme, syncStyles } from "./theme";
 export const colors = { ...activePalette() };
-export function toggleTheme(next: boolean) { applyTheme(next, colors); try { syncStyles(s, colors); } catch {} if (typeof window !== "undefined") window.location.reload(); }
+export function toggleTheme(next: boolean) {
+  applyTheme(next, colors);
+  try {
+    syncStyles(s, colors);
+  } catch {}
+  if (typeof window !== "undefined") window.location.reload();
+}
 export const s = StyleSheet.create({
   row: { flexDirection: "row", alignItems: "center" },
   between: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
@@ -443,4 +449,6 @@ export function resultSummary(value: string) {
     : value;
 }
 
-try { syncStyles(s, colors); } catch {}
+try {
+  syncStyles(s, colors);
+} catch {}

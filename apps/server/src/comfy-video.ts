@@ -18,8 +18,10 @@ function comfyUrl(path: string): string {
 function buildPrompt(raw: string, cfg: VideoSettings): string {
   const p = raw.trim();
   if (!cfg.autoEnhancePrompt) return p;
-  const hasCam = /\b(tripod|pan|panning|zoom|tracking|dolly|drone|handheld|orbit|crane|gimbal)\b/i.test(p);
-  const pre = !hasCam && String(cfg.cameraPrefix).trim() ? `${String(cfg.cameraPrefix).trim()}, ` : "";
+  const hasCam =
+    /\b(tripod|pan|panning|zoom|tracking|dolly|drone|handheld|orbit|crane|gimbal)\b/i.test(p);
+  const pre =
+    !hasCam && String(cfg.cameraPrefix).trim() ? `${String(cfg.cameraPrefix).trim()}, ` : "";
   const sufStr = String(cfg.styleSuffix).trim();
   const suf = sufStr && !p.includes(sufStr.slice(0, 16)) ? `, ${sufStr}` : "";
   return `${pre}${p}${suf}`;
@@ -27,15 +29,21 @@ function buildPrompt(raw: string, cfg: VideoSettings): string {
 
 function resolveDims(aspectRatio: string, cfg: VideoSettings) {
   if (cfg.resolutionMode === "custom") {
-    return { width: Math.round(Number(cfg.customWidth) / 32) * 32, height: Math.round(Number(cfg.customHeight) / 32) * 32 };
+    return {
+      width: Math.round(Number(cfg.customWidth) / 32) * 32,
+      height: Math.round(Number(cfg.customHeight) / 32) * 32,
+    };
   }
   const hd = cfg.resolutionMode === "hd_1280x720";
-  if (aspectRatio === "9:16") return hd ? { width: 720, height: 1280 } : { width: 544, height: 960 };
+  if (aspectRatio === "9:16")
+    return hd ? { width: 720, height: 1280 } : { width: 544, height: 960 };
   if (aspectRatio === "1:1") return hd ? { width: 960, height: 960 } : { width: 768, height: 768 };
   return hd ? { width: 1280, height: 720 } : { width: 960, height: 544 };
 }
 
-async function runWorkflow(workflow: Record<string, { inputs: Record<string, unknown> }>): Promise<string> {
+async function runWorkflow(
+  workflow: Record<string, { inputs: Record<string, unknown> }>,
+): Promise<string> {
   const qRes = await fetch(comfyUrl("/prompt"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -48,7 +56,20 @@ async function runWorkflow(workflow: Record<string, { inputs: Record<string, unk
     await new Promise((r) => setTimeout(r, 5000));
     const hRes = await fetch(comfyUrl(`/history/${prompt_id}`));
     if (!hRes.ok) continue;
-    const hist = (await hRes.json()) as Record<string, { status?: { completed?: boolean; status_str?: string }; outputs?: Record<string, { videos?: Array<{ filename: string; subfolder?: string }>; gifs?: Array<{ filename: string; subfolder?: string }>; images?: Array<{ filename: string; subfolder?: string }> }> }>;
+    const hist = (await hRes.json()) as Record<
+      string,
+      {
+        status?: { completed?: boolean; status_str?: string };
+        outputs?: Record<
+          string,
+          {
+            videos?: Array<{ filename: string; subfolder?: string }>;
+            gifs?: Array<{ filename: string; subfolder?: string }>;
+            images?: Array<{ filename: string; subfolder?: string }>;
+          }
+        >;
+      }
+    >;
     const item = hist[prompt_id];
     if (!item) continue;
     if (item.status?.status_str === "error") throw new Error("ComfyUI video execution failed");
@@ -62,12 +83,26 @@ async function runWorkflow(workflow: Record<string, { inputs: Record<string, unk
   throw new Error("ComfyUI video generation timed out");
 }
 
-async function renderSegment(imagePath: string | null, prompt: string, ar: string, fm: boolean, clipSec: number, cfg: VideoSettings, idx: number): Promise<string> {
+async function renderSegment(
+  imagePath: string | null,
+  prompt: string,
+  ar: string,
+  fm: boolean,
+  clipSec: number,
+  cfg: VideoSettings,
+  idx: number,
+): Promise<string> {
   const tplId = String(imagePath ? cfg.i2vTemplate : cfg.t2vTemplate);
-  const tpl = WORKFLOW_TEMPLATES[tplId] ?? (imagePath ? WORKFLOW_TEMPLATES.ltx23_i2v : WORKFLOW_TEMPLATES.ltx23_t2v);
-  const w = JSON.parse(await readFile(join(SRC_DIR, tpl.file), "utf8")) as Record<string, { inputs: Record<string, unknown> }>;
+  const tpl =
+    WORKFLOW_TEMPLATES[tplId] ??
+    (imagePath ? WORKFLOW_TEMPLATES.ltx23_i2v : WORKFLOW_TEMPLATES.ltx23_t2v);
+  const w = JSON.parse(await readFile(join(SRC_DIR, tpl.file), "utf8")) as Record<
+    string,
+    { inputs: Record<string, unknown> }
+  >;
   const { width, height } = resolveDims(ar, cfg);
-  const seed = cfg.seedMode === "fixed" ? Number(cfg.fixedSeed) + idx * 10 : Math.floor(Math.random() * 1e12);
+  const seed =
+    cfg.seedMode === "fixed" ? Number(cfg.fixedSeed) + idx * 10 : Math.floor(Math.random() * 1e12);
   let inputName = "";
   if (imagePath) {
     await mkdir(COMFY_INPUT_DIR, { recursive: true });
@@ -75,8 +110,16 @@ async function renderSegment(imagePath: string | null, prompt: string, ar: strin
     await copyFile(resolve(imagePath), join(COMFY_INPUT_DIR, inputName));
   }
   const vals: Record<string, unknown> = {
-    ...cfg, image: inputName, prompt, width, height, duration: clipSec,
-    llmSwitch: !fm, baseSeed: seed, upscaleSeed: seed + 1, llmSeed: seed,
+    ...cfg,
+    image: inputName,
+    prompt,
+    width,
+    height,
+    duration: clipSec,
+    llmSwitch: !fm,
+    baseSeed: seed,
+    upscaleSeed: seed + 1,
+    llmSeed: seed,
     outPrefix: `openmuse/${tpl.mode}_${Date.now()}`,
   };
   for (const [k, [nodeId, field]] of Object.entries(tpl.nodes)) {
@@ -85,7 +128,13 @@ async function renderSegment(imagePath: string | null, prompt: string, ar: strin
   return runWorkflow(w);
 }
 
-export async function renderLocalVideo(initialImagePath: string | null, prompt: string, aspectRatio?: string, durationSeconds?: number, fastMode?: boolean): Promise<string> {
+export async function renderLocalVideo(
+  initialImagePath: string | null,
+  prompt: string,
+  aspectRatio?: string,
+  durationSeconds?: number,
+  fastMode?: boolean,
+): Promise<string> {
   const cfg = await readVideoSettings();
   const ar = aspectRatio || String(cfg.aspectRatio);
   const dur = durationSeconds ?? Number(cfg.defaultDurationSeconds);
@@ -103,7 +152,16 @@ export async function renderLocalVideo(initialImagePath: string | null, prompt: 
     if (idx < numChunks - 1) {
       await mkdir(GEN_DIR, { recursive: true });
       const frame = join(GEN_DIR, `tail-${Date.now()}-${idx}.png`);
-      await execFileAsync("ffmpeg", ["-y", "-sseof", `-${Number(cfg.chainOverlapOffset).toFixed(2)}`, "-i", seg, "-frames:v", "1", frame]);
+      await execFileAsync("ffmpeg", [
+        "-y",
+        "-sseof",
+        `-${Number(cfg.chainOverlapOffset).toFixed(2)}`,
+        "-i",
+        seg,
+        "-frames:v",
+        "1",
+        frame,
+      ]);
       nextImage = frame;
     }
   }
@@ -111,13 +169,47 @@ export async function renderLocalVideo(initialImagePath: string | null, prompt: 
   await mkdir(GEN_DIR, { recursive: true });
   const finalPath = join(GEN_DIR, `${initialImagePath ? "animated" : "video"}-${Date.now()}.mp4`);
   if (segments.length === 1) {
-    await execFileAsync("ffmpeg", ["-y", "-i", segments, "-t", String(dur), "-c", "copy", finalPath]);
+    await execFileAsync("ffmpeg", [
+      "-y",
+      "-i",
+      segments[0],
+      "-t",
+      String(dur),
+      "-c",
+      "copy",
+      finalPath,
+    ]);
     return finalPath;
   }
   const listPath = join(GEN_DIR, `concat-${Date.now()}.txt`);
-  await writeFile(listPath, segments.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join("\n"), "utf8");
+  await writeFile(
+    listPath,
+    segments.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join("\n"),
+    "utf8",
+  );
   try {
-    await execFileAsync("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-t", String(dur), "-c:v", String(cfg.outputCodec), "-crf", String(cfg.outputCrf), "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", finalPath]);
+    await execFileAsync("ffmpeg", [
+      "-y",
+      "-f",
+      "concat",
+      "-safe",
+      "0",
+      "-i",
+      listPath,
+      "-t",
+      String(dur),
+      "-c:v",
+      String(cfg.outputCodec),
+      "-crf",
+      String(cfg.outputCrf),
+      "-pix_fmt",
+      "yuv420p",
+      "-c:a",
+      "aac",
+      "-movflags",
+      "+faststart",
+      finalPath,
+    ]);
   } finally {
     await rm(listPath, { force: true });
   }

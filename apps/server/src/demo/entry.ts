@@ -37,7 +37,7 @@ const db = await createStore({ dataDir: join(dataDir, "postgres") });
 try {
   await db.put("system", "sessions", {
     id: createHash("sha256").update(sessionToken).digest("hex"),
-    owner: (process.env.OPENMUSE_OWNER || "openmuse-studio"),
+    owner: process.env.OPENMUSE_OWNER || process.env.OPENMUSE_OWNER || "local-user",
     expiresAt: Date.now() + 24 * 60 * 60 * 1000,
   });
 } finally {
