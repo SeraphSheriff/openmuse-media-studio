@@ -38,6 +38,8 @@ import { ComputerEntry } from "./src/computer";
 import { ComputerDraftProvider } from "./src/computer-drafts";
 import { Details } from "./src/details";
 import { BrowserScreen, CalendarScreen, FilesScreen, MailScreen } from "./src/screens";
+import { useThemeMode } from "./src/theme";
+import { VideoSettingsModal } from "./src/VideoSettingsModal";
 import { ThreadsProvider, ThreadsSheet, useMuseThread } from "./src/threads";
 import { Button, Card, colors, ErrorNotice, Field, IconButton, Mascot, s } from "./src/ui";
 import { type Detail, useWorkspace, WorkspaceContext } from "./src/workspace";
@@ -240,6 +242,7 @@ function WorkspaceShell({
   error: string;
   prompt?: { id: number; text: string };
 }) {
+  useThemeMode();
   const { workspace, section, navigate, open } = useWorkspace();
   const { data } = useAgentWorkspace();
   const {
@@ -252,6 +255,7 @@ function WorkspaceShell({
     enabled: richThreads,
   } = useMuseThread();
   const [threadsOpen, setThreadsOpen] = useState(false);
+  const [videoSettingsOpen, setVideoSettingsOpen] = useState(false);
   const { width } = useWindowDimensions();
   const desktop = width >= 900;
   const pending =
@@ -436,7 +440,7 @@ function WorkspaceShell({
                 width: "100%",
                 maxWidth: 370,
                 padding: 5,
-                backgroundColor: "#FFF",
+                backgroundColor: colors.card,
                 borderRadius: 40,
                 shadowColor: "#132631",
                 shadowOffset: { width: 0, height: 2 },
@@ -444,7 +448,7 @@ function WorkspaceShell({
                 shadowRadius: 18,
                 elevation: 3,
                 borderWidth: 1,
-                borderColor: "#F8F8F8",
+                borderColor: colors.line,
               }}
             >
               {nav.map((item) => {
@@ -461,7 +465,7 @@ function WorkspaceShell({
                       height: 47,
                       alignItems: "center",
                       justifyContent: "center",
-                      backgroundColor: active ? "#F0F1F2" : "transparent",
+                      backgroundColor: active ? colors.line : "transparent",
                       borderRadius: 28,
                     }}
                   >
@@ -501,7 +505,8 @@ function WorkspaceShell({
             </View>
           </View>
         )}
-        {threadsOpen && <ThreadsSheet onClose={() => setThreadsOpen(false)} />}
+        {threadsOpen && <ThreadsSheet onClose={() => setThreadsOpen(false)} onOpenVideoStudio={() => setVideoSettingsOpen(true)} />}
+        {videoSettingsOpen && <VideoSettingsModal onClose={() => setVideoSettingsOpen(false)} />}
         {detail && (
           <Details
             key={

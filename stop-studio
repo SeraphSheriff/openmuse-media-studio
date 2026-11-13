@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[ -f "$SCRIPT_DIR/.env" ] && set -a && . "$SCRIPT_DIR/.env" && set +a
+AGENT_NAME="${OPENMUSE_AGENT_NAME:-OpenMuse Studio}"
+
+pkill -f "apps/server" 2>/dev/null || true
+pkill -f "expo" 2>/dev/null || true
+pkill -f "apps/worker/src/index.ts" 2>/dev/null || true
+pkill -f "main.py --listen" 2>/dev/null || true
+echo "$AGENT_NAME + ComfyUI stopped."

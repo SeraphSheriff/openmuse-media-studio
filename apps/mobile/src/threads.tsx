@@ -3,6 +3,8 @@ import {
   Archive,
   CalendarDays,
   FileText,
+  Film,
+  Moon,
   MessageCircle,
   Monitor,
   Plus,
@@ -11,7 +13,8 @@ import {
 } from "lucide-react-native";
 import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
-import { Button, colors, ErrorNotice, Field, LinkRow, Sheet, s } from "./ui";
+import { Button, colors, toggleTheme, ErrorNotice, Field, LinkRow, Sheet, s } from "./ui";
+import { useThemeMode } from "./theme";
 import { useWorkspace } from "./workspace";
 
 function newThreadId() {
@@ -99,7 +102,7 @@ export function useMuseThread() {
   if (!context) throw new Error("Threads provider is unavailable");
   return context;
 }
-export function ThreadsSheet({ onClose }: { onClose: () => void }) {
+export function ThreadsSheet({ onClose, onOpenVideoStudio }: { onClose: () => void; onOpenVideoStudio?: () => void }) {
   const {
     enabled,
     selection,
@@ -112,6 +115,7 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
     start,
   } = useMuseThread();
   const { workspace, open, navigate, refresh } = useWorkspace();
+  const dark = useThemeMode();
   const threads = useThreads({ agentId: "default", enabled, includeArchived: true, limit: 20 });
   const [editing, setEditing] = useState<string>();
   const [name, setName] = useState("");
@@ -318,6 +322,8 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
         />
         <LinkRow icon={CalendarDays} title="Calendar" onPress={() => go("calendar")} />
         <LinkRow icon={FileText} title="Files" onPress={() => go("files")} />
+        <LinkRow icon={Moon} title="Dark mode" detail={dark ? "Native dark theme active (turn off Owl on localhost)" : "Switch to native dark theme"} onPress={() => { toggleTheme(!dark); }} />
+        <LinkRow icon={Film} title="Video studio" detail="LTX-2.3 prompt guardrails, I2V lock & chaining" onPress={() => { onClose(); onOpenVideoStudio?.(); }} />
         <LinkRow icon={Settings2} title="Apps & settings" onPress={() => go("apps")} />
         <Button small icon={RefreshCw} onPress={() => void mutate(refresh)}>
           Refresh workspace

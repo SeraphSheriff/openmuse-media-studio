@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR" || exit 1
+[ -f .env ] && set -a && . ./.env && set +a
+AGENT_NAME="${OPENMUSE_AGENT_NAME:-OpenMuse Studio}"
+COMFY_PATH="${COMFYUI_DIR:-$HOME/ComfyUI}"
+
+nohup pnpm dev > api.log 2>&1 &
+sleep 1
+nohup pnpm dev:web > web.log 2>&1 &
+sleep 1
+nohup pnpm dev:browser > browser.log 2>&1 &
+if [ -d "$COMFY_PATH" ]; then
+  cd "$COMFY_PATH" && nohup ./venv/bin/python main.py --listen 127.0.0.1 --port 8188 --enable-manager --reserve-vram 2.0 --cache-none > comfy.log 2>&1 &
+fi
+echo "$AGENT_NAME + ComfyUI started: OpenMuse (:8081), ComfyUI (:8188)"

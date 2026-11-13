@@ -13,6 +13,7 @@ import {
 import { calendarRangeSchema } from "../../../../packages/domain/src/index.ts";
 import { jevActionPrefix, parseJevAction } from "../../../../packages/domain/src/jev.ts";
 import { computerInstructions, computerTools } from "../computer-tools.ts";
+import { mediaTools } from "../media-tools.ts";
 import type { Config } from "../config.ts";
 import { createJevAdapter, type JevAdapter } from "../jev/adapter.ts";
 import { JevService } from "../jev/service.ts";
@@ -330,6 +331,7 @@ export class ConversationAgent extends AbstractAgent {
             }),
           ]
         : []),
+      ...mediaTools(),
       defineTool({
         name: "delegate_task",
         description:

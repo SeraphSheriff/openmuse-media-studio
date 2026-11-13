@@ -117,7 +117,7 @@ export function TaskCard({
           padding: compact ? 15 : 20,
           gap: 11,
           borderRadius: 22,
-          backgroundColor: "#F0F1F2",
+          backgroundColor: colors.card,
         }}
       >
         <View style={[s.row, { gap: 10 }]}>

@@ -1,3 +1,4 @@
+import { DEFAULT_VIDEO_SETTINGS, readVideoSettings, STUDIO_SCHEMA, writeVideoSettings } from "./video-settings.ts";
 import "./config.ts";
 import { randomUUID } from "node:crypto";
 import { MessageSchema } from "@ag-ui/core";
@@ -115,9 +116,9 @@ export async function createApp(
       throw new AppError("Too many sign-in attempts. Try again in a minute.", 429);
     const body = z.object({ accessKey: z.string().optional() }).parse(await c.req.json());
     const session = await auth.session(body.accessKey);
-    await workspace.ensureSample("local-user", actions);
-    await agent.ensure("local-user");
-    if (config.mode === "sample") await agent.refreshIdeas("local-user");
+    await workspace.ensureSample((process.env.OPENMUSE_OWNER || "openmuse-studio"), actions);
+    await agent.ensure((process.env.OPENMUSE_OWNER || "openmuse-studio"));
+    if (config.mode === "sample") await agent.refreshIdeas((process.env.OPENMUSE_OWNER || "openmuse-studio"));
     return c.json(session);
   });
   app.get("/api/google/callback", async (c) => {
@@ -356,6 +357,9 @@ export async function createApp(
     );
     return new Response(body, { status: response.status, headers: response.headers });
   });
+  app.get("/api/video-settings", async (c) => c.json({ settings: await readVideoSettings(), schema: STUDIO_SCHEMA }));
+  app.post("/api/video-settings", async (c) => c.json({ settings: await writeVideoSettings(await c.req.json()), schema: STUDIO_SCHEMA }));
+  app.post("/api/video-settings/reset", async (c) => c.json({ settings: await writeVideoSettings(DEFAULT_VIDEO_SETTINGS), schema: STUDIO_SCHEMA }));
   app.get("/", (c) =>
     c.json({ name: "OpenMuse", app: "http://localhost:8081", health: "/api/health" }),
   );

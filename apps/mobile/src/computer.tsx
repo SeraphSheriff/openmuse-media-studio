@@ -38,7 +38,7 @@ export function ComputerEntry() {
           paddingHorizontal: 12,
           paddingVertical: 7,
           borderRadius: 20,
-          backgroundColor: "#F1F3F4",
+          backgroundColor: colors.card,
         },
       ]}
     >
@@ -63,7 +63,7 @@ export function BrowserThreadCard({ browser }: { browser: BrowserSession }) {
   }, [browser.previewUrl, browser.updatedAt]);
   return (
     <Card
-      style={{ padding: 13, backgroundColor: "#EEEEF0", gap: 12, maxWidth: 440, width: "100%" }}
+      style={{ padding: 13, backgroundColor: colors.card, gap: 12, maxWidth: 440, width: "100%" }}
     >
       <View style={[s.row, { gap: 10 }]}>
         <View style={[s.iconBox, { width: 36, height: 36, borderRadius: 9 }]}>
@@ -84,7 +84,7 @@ export function BrowserThreadCard({ browser }: { browser: BrowserSession }) {
         <Image
           accessibilityLabel={`Browser preview: ${browser.title}`}
           source={{ uri: browser.previewUrl }}
-          style={{ width: "100%", aspectRatio: 1.6, borderRadius: 11, backgroundColor: "#FFF" }}
+          style={{ width: "100%", aspectRatio: 1.6, borderRadius: 11, backgroundColor: colors.card }}
           resizeMode="contain"
           onError={() => setFailed(true)}
         />
@@ -93,7 +93,7 @@ export function BrowserThreadCard({ browser }: { browser: BrowserSession }) {
           style={{
             padding: 24,
             borderRadius: 12,
-            backgroundColor: "#FFF",
+            backgroundColor: colors.card,
             alignItems: "center",
             gap: 10,
           }}

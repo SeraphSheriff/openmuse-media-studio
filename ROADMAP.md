@@ -1,3 +1,12 @@
+# Roadmap
+
+## Media Studio Extensions
+- [ ] Additional pluggable ComfyUI workflow templates (Wan, HunyuanVideo, Flux image-to-video, and audio/foley pipelines)
+- [ ] Per-template preset profiles inside the Video Studio drawer
+- [ ] Optional local LLM prompt & storyboard expansion via LM Studio (`http://localhost:1234/v1`)
+
+---
+
 # OpenMuse roadmap
 
 The release is a personal-agent alpha: delegate a job, inspect its plan, supply missing information, review an action, and return to a saved result. The [reference inventory](docs/FEATURES.md) is broader than this release.

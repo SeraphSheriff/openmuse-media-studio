@@ -590,7 +590,7 @@ export function ChatScreen({
                       borderRadius: 22,
                       borderBottomRightRadius: user ? 7 : 22,
                       borderBottomLeftRadius: user ? 22 : 7,
-                      backgroundColor: user ? colors.blue : "#EEEEF0",
+                      backgroundColor: user ? colors.blue : colors.card,
                     }}
                   >
                     {user ? (
@@ -717,7 +717,7 @@ export function ChatScreen({
                 gap: 7,
                 paddingHorizontal: 19,
                 paddingVertical: 18,
-                backgroundColor: "#EEEEF0",
+                backgroundColor: colors.card,
                 borderRadius: 28,
               },
             ]}
@@ -859,7 +859,7 @@ export function ChatScreen({
         )}
         <View
           style={{
-            backgroundColor: "#FFF",
+            backgroundColor: colors.card,
             borderRadius: 32,
             borderWidth: 1,
             borderColor: focused ? "#C7E4F9" : "#EEF0F2",
@@ -982,7 +982,7 @@ export function ChatScreen({
                 width: 44,
                 height: 44,
                 borderRadius: 24,
-                backgroundColor: replying || draft.trim() ? colors.blue : "#F3F5F6",
+                backgroundColor: replying || draft.trim() ? colors.blue : colors.line,
                 alignItems: "center",
                 justifyContent: "center",
                 transform: [{ scale: pressed ? 0.94 : 1 }],

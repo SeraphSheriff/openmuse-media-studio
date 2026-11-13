@@ -1,3 +1,4 @@
+import { activePalette, setDarkMode as applyTheme, syncStyles } from "./theme";
 import { ArrowUpRight, Check, ChevronRight, type LucideIcon, X } from "lucide-react-native";
 import type { ReactNode } from "react";
 import {
@@ -15,20 +16,8 @@ import {
   type ViewStyle,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-export const colors = {
-  canvas: "#FCFCFC",
-  card: "#FFFFFF",
-  text: "#11191C",
-  muted: "#697176",
-  line: "#EEEEF0",
-  blue: "#C8E7FF",
-  blueDark: "#1473C8",
-  sky: "#EDF7FD",
-  green: "#E3F3E8",
-  lavender: "#F0EEFA",
-  orange: "#FDF0DF",
-  danger: "#AA4A45",
-};
+export const colors = { ...activePalette() };
+export function toggleTheme(next: boolean) { applyTheme(next, colors); try { syncStyles(s, colors); } catch {} if (typeof window !== "undefined") window.location.reload(); }
 export const s = StyleSheet.create({
   row: { flexDirection: "row", alignItems: "center" },
   between: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
@@ -60,7 +49,7 @@ export const s = StyleSheet.create({
     paddingVertical: 12,
     color: colors.text,
     fontSize: 16,
-    backgroundColor: "#FFF",
+    backgroundColor: colors.card,
     minHeight: 45,
   },
   field: { gap: 7, marginBottom: 16 },
@@ -75,7 +64,7 @@ export const s = StyleSheet.create({
     borderRadius: 24,
   },
   primary: { backgroundColor: colors.blue },
-  secondary: { backgroundColor: "#F1F2F3" },
+  secondary: { backgroundColor: colors.line },
   buttonText: { fontSize: 14, fontWeight: "600" },
   chip: {
     paddingHorizontal: 10,
@@ -179,7 +168,7 @@ export function IconButton({
           alignItems: "center",
           justifyContent: "center",
           borderRadius: 22,
-          backgroundColor: pressed ? colors.line : "#FFFFFF",
+          backgroundColor: pressed ? colors.line : colors.card,
         },
       ]}
     >
@@ -333,7 +322,7 @@ export function CheckRow({
           borderRadius: 5,
           borderWidth: 1,
           borderColor: checked ? colors.text : colors.line,
-          backgroundColor: checked ? colors.text : "#FFF",
+          backgroundColor: checked ? colors.blueDark : colors.card,
           alignItems: "center",
           justifyContent: "center",
         }}
@@ -453,3 +442,5 @@ export function resultSummary(value: string) {
     ? "Reply saved in your local Sent mail."
     : value;
 }
+
+try { syncStyles(s, colors); } catch {}
