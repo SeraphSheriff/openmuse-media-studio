@@ -189,9 +189,13 @@ export async function createBrowserManager(
           DISPLAY: process.env.DISPLAY ?? ":0",
           WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY ?? "wayland-0",
         },
-        headless: false,
-        channel: "chrome",
-        ignoreDefaultArgs: ["--enable-automation"],
+        headless: process.env.OPENMUSE_BROWSER_HEADLESS !== "false",
+        ...(process.env.OPENMUSE_BROWSER_CHANNEL
+          ? { channel: process.env.OPENMUSE_BROWSER_CHANNEL }
+          : {}),
+        ...(process.env.OPENMUSE_BROWSER_HEADLESS === "false"
+          ? { ignoreDefaultArgs: ["--enable-automation"] }
+          : {}),
         viewport: { width: 1280, height: 800 },
         proxy: { server: proxy.url, bypass: "<-loopback>" },
         serviceWorkers: "block",
