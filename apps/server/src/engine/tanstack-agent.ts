@@ -125,6 +125,26 @@ export function tanstackAgent(options: {
     type: "tanstack",
     factory: ({ input, abortController }) => {
       const converted = convertInputToTanStackAI(input);
+      const messages = converted.messages.map((msg) =>
+        msg.role === "assistant" && Array.isArray(msg.toolCalls) && msg.toolCalls.length > 0
+          ? {
+              ...msg,
+              toolCalls: msg.toolCalls.map((tc) => {
+                const meta = (tc as { metadata?: Record<string, unknown> }).metadata;
+                return {
+                  ...tc,
+                  metadata: {
+                    ...meta,
+                    thoughtSignature:
+                      typeof meta?.thoughtSignature === "string"
+                        ? meta.thoughtSignature
+                        : "skip_thought_signature_validator",
+                  },
+                };
+              }),
+            }
+          : msg,
+      );
       // Build the system prompt like the classic mode. It does not forward system messages.
       let system = options.prompt;
       if (input.context.length) {
@@ -139,7 +159,7 @@ export function tanstackAgent(options: {
         system += `\n## Application State\nThis is state from the application that you can edit by calling AGUISendStateSnapshot or AGUISendStateDelta.\n\`\`\`json\n${JSON.stringify(input.state, null, 2)}\n\`\`\`\n`;
       return chat({
         adapter: adapter(options.model),
-        messages: converted.messages,
+        messages,
         systemPrompts: system ? [system] : [],
         tools: [
           ...converted.tools,

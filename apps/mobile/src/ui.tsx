@@ -88,7 +88,15 @@ export const s = StyleSheet.create({
     alignItems: "center",
     backgroundColor: colors.sky,
   },
-  error: { padding: 16, borderRadius: 14, backgroundColor: "#FBEFED", marginVertical: 10, gap: 4 },
+  error: {
+    padding: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    backgroundColor: colors.errorBg,
+    borderColor: colors.errorBorder,
+    marginVertical: 10,
+    gap: 4,
+  },
   modalShade: {
     flex: 1,
     backgroundColor: "rgba(35,48,44,0.25)",

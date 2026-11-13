@@ -33,6 +33,7 @@ const ThreadContext = createContext<{
   loading: boolean;
   error: string;
   retry: () => void;
+  clearMain: () => Promise<void>;
   select: (selection: Selection) => void;
   start: () => void;
   claimPrompt: (id: number) => boolean;
@@ -88,6 +89,17 @@ export function ThreadsProvider({ children }: { children: ReactNode }) {
         loading,
         error,
         retry: () => setAttempt((n) => n + 1),
+        clearMain: async () => {
+          const next = await api.request<{ threadId: string; existing: boolean }>(
+            "/api/main-thread/reset",
+            { method: "POST" },
+          );
+          const fresh = { id: next.threadId, existing: false };
+          setMainId(fresh.id);
+          setSelection(fresh);
+          setVisited((items) => [fresh, ...items.filter((item) => item.id !== mainId)]);
+          navigate("chat");
+        },
         selection,
         select,
         start: () => select({ id: newThreadId(), existing: false }),
@@ -117,6 +129,7 @@ export function ThreadsSheet({
     loading,
     error: mainError,
     retry,
+    clearMain,
     select,
     start,
   } = useMuseThread();
@@ -167,6 +180,18 @@ export function ThreadsSheet({
                 onClose();
               }}
             />
+            <Button
+              small
+              icon={RefreshCw}
+              onPress={() => {
+                void mutate(async () => {
+                  await clearMain();
+                  onClose();
+                });
+              }}
+            >
+              Clear main chat
+            </Button>
             <Button
               primary
               icon={Plus}

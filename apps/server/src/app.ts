@@ -224,6 +224,25 @@ export async function createApp(
       201,
     );
   });
+  app.post("/api/main-thread/reset", async (c) => {
+    const owner = c.get("owner");
+    const nextId = randomUUID();
+    await db.put(owner, "conversation-settings", {
+      id: "main",
+      threadId: nextId,
+      existing: false,
+    });
+    try {
+      await intelligence.getOrCreateThread({
+        threadId: nextId,
+        userId: owner,
+        agentId: "default",
+      });
+    } catch {
+      // Thread will be initialized lazily on first run if intelligence service is offline
+    }
+    return c.json({ threadId: nextId, existing: false });
+  });
   app.get("/api/main-thread", async (c) => {
     const owner = c.get("owner");
     await db.insertIfAbsent(owner, "conversation-settings", {

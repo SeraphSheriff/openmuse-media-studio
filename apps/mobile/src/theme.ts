@@ -12,7 +12,9 @@ export const LIGHT_COLORS = {
   green: "#E3F3E8",
   lavender: "#F0EEFA",
   orange: "#FDF0DF",
-  danger: "#AA4A45",
+  danger: "#991B1B",
+  errorBg: "#FEF2F2",
+  errorBorder: "#FECACA",
 };
 
 export const DARK_COLORS = {
@@ -27,7 +29,9 @@ export const DARK_COLORS = {
   green: "#163024",
   lavender: "#252136",
   orange: "#332617",
-  danger: "#F87171",
+  danger: "#FECACA",
+  errorBg: "#2D1216",
+  errorBorder: "#7F1D1D",
 };
 
 const KEY = "openmuse_dark";
@@ -75,6 +79,10 @@ export function syncStyles(
     s.card.borderColor = c.line;
   }
   if (s.divider) s.divider.backgroundColor = c.line;
+  if (s.error) {
+    s.error.backgroundColor = c.errorBg;
+    s.error.borderColor = c.errorBorder;
+  }
   if (s.input) {
     s.input.borderColor = c.line;
     s.input.color = c.text;

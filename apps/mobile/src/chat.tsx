@@ -212,7 +212,7 @@ export function ChatScreen({
   thread?: Selection;
   active?: boolean;
 }) {
-  const { api, workspace: w, refresh, navigate } = useWorkspace();
+  const { api, workspace: w, refresh } = useWorkspace();
   const { data: agentWorkspace, refresh: refreshAgent } = useAgentWorkspace();
   const { enabled: richThreads, mainId, claimPrompt } = useMuseThread();
   const selection = thread || { id: "local", existing: false };
@@ -535,23 +535,36 @@ export function ChatScreen({
                 maxWidth: 350,
               }}
             >
-              A little help. A lot more room for life.
+              Your local AI media production studio.
             </Text>
             <Text style={[s.muted, { maxWidth: 320, textAlign: "center", lineHeight: 23 }]}>
-              Tell me what’s on your mind. I can make a plan, work with your apps, and use my
-              computer to help.
+              Describe a scene, animate an image, or chain multi-shot videos with ComfyUI—and yes, I
+              can still doom scroll a website, spew trivial news items, or explain the mysteries of
+              AI.
             </Text>
             <View style={{ width: "100%", maxWidth: 360, marginTop: 14, gap: 8 }}>
               {[
                 {
-                  text: "Find cool things on Hacker News",
-                  action: () => enqueue("Check out Hacker News for cool stuff"),
+                  text: "Generate an 8s cinematic drone shot",
+                  action: () =>
+                    enqueue(
+                      "Generate a cinematic 8-second drone shot sweeping over misty pine mountains at golden hour.",
+                    ),
                 },
                 {
-                  text: "Summarize copilotkit.ai",
-                  action: () => enqueue("Summarize copilotkit.ai"),
+                  text: "Chain a 24s multi-shot cyberpunk scene",
+                  action: () =>
+                    enqueue(
+                      "Create a 24-second multi-shot cyberpunk alley scene in the rain with smooth camera motion.",
+                    ),
                 },
-                { text: "Keep an eye on a website", action: () => navigate("goals") },
+                {
+                  text: "Create a concept image & animate it",
+                  action: () =>
+                    enqueue(
+                      "Generate a photorealistic concept image of a vintage spacecraft on a desert mesa, then animate it into an 8-second video.",
+                    ),
+                },
               ].map((item) => (
                 <Button key={item.text} onPress={item.action}>
                   {item.text}
