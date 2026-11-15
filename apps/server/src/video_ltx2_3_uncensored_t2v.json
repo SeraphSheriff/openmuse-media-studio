@@ -1,0 +1,71 @@
+{
+  "18": {
+    "class_type": "LTXV23ModelsLoader",
+    "inputs": {
+      "unet_name": "ltxv23_uncensored_v1.4_Q6_K.gguf",
+      "text_encoder_name": "gemma-3-12b-it-ablit-norms-biproj-Q4_K_M.gguf",
+      "projections_name": "ltxv23_uncensored_v1.4_projections.safetensors",
+      "video_vae_name": "ltxv23_uncensored_v1.4_video_vae.safetensors",
+      "audio_vae_name": "ltxv23_uncensored_v1.4_audio_vae.safetensors"
+    }
+  },
+  "19": {
+    "class_type": "LTXV23ImgToVideo",
+    "inputs": {
+      "clip": ["18", 1],
+      "vae": ["18", 2],
+      "audio_vae": ["18", 3],
+      "prompt": "",
+      "negative_prompt": "",
+      "width": 960,
+      "height": 544,
+      "length": 193,
+      "frame_rate": 24,
+      "batch_size": 1,
+      "length_from_audio": false
+    }
+  },
+  "21": {
+    "class_type": "LTXV23RefineSampler",
+    "inputs": {
+      "model": ["18", 0],
+      "positive": ["19", 0],
+      "negative": ["19", 1],
+      "latent_image": ["19", 2],
+      "upscale_model": ["159", 0],
+      "vae": ["18", 2],
+      "seed": 42,
+      "base_schedule": "dmd (8 steps)",
+      "base_steps": 8,
+      "refine_seed": 43,
+      "refine_schedule": "refine (3 steps)",
+      "refine_steps": 3,
+      "cfg": 1,
+      "sampler_name": "euler_ancestral"
+    }
+  },
+  "22": {
+    "class_type": "LTXV23AVDecode",
+    "inputs": {
+      "latent": ["21", 0],
+      "vae": ["18", 2],
+      "audio_vae": ["18", 3],
+      "fps": 24
+    }
+  },
+  "75": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": ["22", 0],
+      "filename_prefix": "openmuse/ltx23_uncensored",
+      "format": "auto",
+      "codec": "auto"
+    }
+  },
+  "159": {
+    "class_type": "LatentUpscaleModelLoader",
+    "inputs": {
+      "model_name": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
+    }
+  }
+}

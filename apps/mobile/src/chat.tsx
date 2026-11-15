@@ -203,6 +203,155 @@ function ServerToolCard({
     </Card>
   );
 }
+interface VideoTrace {
+  id: string;
+  active: boolean;
+  status: "idle" | "running" | "done" | "error";
+  stage: string;
+  percent: number;
+  segment: number;
+  totalSegments: number;
+  startedAt: number;
+  logs: Array<{ atSec: number; text: string; isError?: boolean }>;
+}
+function AgentProgressBubble({ activeTool, running }: { activeTool?: string; running: boolean }) {
+  const { api } = useWorkspace();
+  const [sec, setSec] = useState(0);
+  const [v, setV] = useState<VideoTrace | null>(null);
+  const [dismissed, setDismissed] = useState("");
+  useEffect(() => {
+    const t0 = Date.now(),
+      iv1 = setInterval(() => setSec(Math.floor((Date.now() - t0) / 1000)), 1000);
+    let dead = false;
+    const poll = () =>
+      api
+        .request<VideoTrace>("/api/video-progress")
+        .then((r) => {
+          if (!dead) setV(r.status !== "idle" ? r : null);
+        })
+        .catch(() => {});
+    void poll();
+    const iv2 = setInterval(poll, 1500);
+    return () => {
+      dead = true;
+      clearInterval(iv1);
+      clearInterval(iv2);
+    };
+  }, [api]);
+  const show = Boolean(v && v.status !== "idle" && v.id !== dismissed);
+  if (!running && !show) return null;
+  const sNow = v?.startedAt ? Math.max(0, Math.floor((Date.now() - v.startedAt) / 1000)) : sec;
+  const clk = sNow >= 60 ? `${Math.floor(sNow / 60)}m ${sNow % 60}s` : `${sNow}s`;
+  const seg = v && v.totalSegments > 1 ? `[${v.segment}/${v.totalSegments}] ` : "";
+  const lbl =
+    show && v
+      ? `${seg}${v.stage || "Rendering..."}`
+      : activeTool
+        ? `Running ${activeTool}...`
+        : "Thinking...";
+  const isErr = v?.status === "error",
+    isDone = v?.status === "done";
+  return (
+    <View
+      accessibilityLabel="Agent is working"
+      style={{
+        alignSelf: "flex-start",
+        minWidth: show ? 300 : 165,
+        maxWidth: 440,
+        gap: 8,
+        paddingHorizontal: 16,
+        paddingVertical: 13,
+        backgroundColor: colors.card,
+        borderColor: isErr ? colors.danger : isDone ? colors.green : colors.line,
+        borderWidth: 1,
+        borderRadius: 20,
+      }}
+    >
+      <View style={[s.between, { gap: 10 }]}>
+        <Text
+          style={[
+            s.small,
+            { color: isErr ? colors.danger : colors.text, fontWeight: "600", flexShrink: 1 },
+          ]}
+          numberOfLines={2}
+        >
+          {lbl}
+        </Text>
+        <View style={[s.row, { gap: 8 }]}>
+          {v?.active && <Text style={[s.small, { color: colors.muted }]}>{clk}</Text>}
+          {show && !v?.active && v && (
+            <Pressable
+              onPress={() => {
+                setDismissed(v.id);
+                void api.request("/api/video-progress/dismiss", {}, "POST").catch(() => {});
+              }}
+              style={{
+                paddingHorizontal: 8,
+                paddingVertical: 2,
+                borderRadius: 10,
+                backgroundColor: colors.canvas,
+              }}
+            >
+              <Text style={[s.small, { color: colors.muted, fontWeight: "600" }]}>Dismiss</Text>
+            </Pressable>
+          )}
+        </View>
+      </View>
+      {show && v ? (
+        <>
+          <View
+            style={{ height: 6, borderRadius: 3, backgroundColor: colors.line, overflow: "hidden" }}
+          >
+            <View
+              style={{
+                height: "100%",
+                width: `${Math.max(4, v.percent)}%`,
+                backgroundColor: isErr ? colors.danger : isDone ? colors.green : colors.blue,
+                borderRadius: 3,
+              }}
+            />
+          </View>
+          {v.logs.length > 0 && (
+            <View style={{ gap: 3, paddingTop: 4, borderTopWidth: 1, borderTopColor: colors.line }}>
+              {v.logs.slice(-8).map((e) => (
+                <Text
+                  key={`${e.atSec}-${e.text}`}
+                  style={[
+                    s.small,
+                    {
+                      fontSize: 11,
+                      lineHeight: 15,
+                      color: e.isError ? colors.danger : colors.muted,
+                    },
+                  ]}
+                  numberOfLines={2}
+                >
+                  {e.atSec}s · {e.text}
+                </Text>
+              ))}
+            </View>
+          )}
+        </>
+      ) : (
+        <View style={[s.row, { gap: 6 }]}>
+          {["a", "b", "c"].map((k, i) => (
+            <View
+              key={k}
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: 3.5,
+                backgroundColor: i === sec % 3 ? colors.blue : colors.muted,
+                opacity: i === sec % 3 ? 1 : 0.4,
+              }}
+            />
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
 export function ChatScreen({
   prompt,
   thread,
@@ -720,35 +869,13 @@ export function ChatScreen({
           </>
         )}
         {(!richThreads || selection.id === mainId) && <BackgroundUpdates />}
-        {(busy || agent.isRunning) && (
-          <View
-            accessibilityLabel="Agent is working"
-            style={[
-              s.row,
-              {
-                alignSelf: "flex-start",
-                gap: 7,
-                paddingHorizontal: 19,
-                paddingVertical: 18,
-                backgroundColor: colors.card,
-                borderRadius: 28,
-              },
-            ]}
-          >
-            {[0.4, 0.75, 0.5].map((opacity) => (
-              <View
-                key={opacity}
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: 4,
-                  backgroundColor: colors.muted,
-                  opacity,
-                }}
-              />
-            ))}
-          </View>
-        )}
+        <AgentProgressBubble
+          running={busy || agent.isRunning}
+          activeTool={
+            messages.flatMap((m) => ("toolCalls" in m ? m.toolCalls || [] : [])).at(-1)?.function
+              .name
+          }
+        />
         <ErrorNotice error={error} />
         {!!error && (
           <Button

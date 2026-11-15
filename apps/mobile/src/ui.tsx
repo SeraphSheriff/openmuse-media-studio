@@ -1,5 +1,6 @@
 import { ArrowUpRight, Check, ChevronRight, type LucideIcon, X } from "lucide-react-native";
 import type { ReactNode } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -15,6 +16,7 @@ import {
   type ViewStyle,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { API_URL } from "./api";
 import { activePalette, setDarkMode as applyTheme, syncStyles } from "./theme";
 export const colors = { ...activePalette() };
 export function toggleTheme(next: boolean) {
@@ -403,6 +405,12 @@ export function LinkRow({
   );
 }
 /** OpenMuse's original capybara, shared by every assistant surface. */
+let _avatarVer = Date.now();
+const _avatarSubs = new Set<(v: number) => void>();
+export function notifyAvatarUpdated(ts = Date.now()) {
+  _avatarVer = ts;
+  for (const fn of _avatarSubs) fn(ts);
+}
 export function Mascot({
   size = 42,
   variant = "sky",
@@ -410,13 +418,28 @@ export function Mascot({
   size?: number;
   variant?: "sky" | "sand" | "lilac";
 }) {
+  const [ver, setVer] = useState(_avatarVer);
+  const [useFallback, setUseFallback] = useState(false);
+  useEffect(() => {
+    const fn = (v: number) => {
+      setUseFallback(false);
+      setVer(v);
+    };
+    _avatarSubs.add(fn);
+    return () => {
+      _avatarSubs.delete(fn);
+    };
+  }, []);
   const palette = {
     sky: "#ECF5FA",
     sand: "#FAF0DF",
     lilac: "#F1ECF9",
   }[variant];
   return (
-    <View accessibilityLabel="OpenMuse capybara" style={{ width: size, height: size }}>
+    <View
+      accessibilityLabel="OpenMuse avatar"
+      style={{ width: size, height: size, borderRadius: size, overflow: "hidden" }}
+    >
       <View
         style={{
           position: "absolute",
@@ -429,8 +452,13 @@ export function Mascot({
         }}
       />
       <Image
-        source={require("../assets/capybara.png")}
-        resizeMode="contain"
+        source={
+          useFallback
+            ? require("../assets/capybara.png")
+            : { uri: `${API_URL}/avatar-image?v=${ver}` }
+        }
+        onError={() => setUseFallback(true)}
+        resizeMode="cover"
         style={{ width: size, height: size }}
         accessible={false}
       />

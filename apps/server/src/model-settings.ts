@@ -14,22 +14,24 @@ export interface ModelSettings {
   q5Model: string;
   q5ModelPath: string;
   q5BaseUrl: string;
+  maxSteps: number;
 }
 
 const SETTINGS_PATH = resolve(process.cwd(), "model-settings.json");
 
 export const DEFAULT_MODEL_SETTINGS: ModelSettings = {
   mode: "cloud",
-  q4Model: process.env.LOCAL_QWEN_Q4_MODEL?.trim() || "openai/qwen2.5-coder-7b-instruct-q4_k_m",
+  q4Model: process.env.LOCAL_QWEN_Q4_MODEL?.trim() || "openai/Qwen3-8B-abliterated-q4_k_m",
   q4ModelPath:
     process.env.LOCAL_QWEN_Q4_PATH?.trim() ||
-    resolve(homedir(), "models/qwen2.5-coder-7b-instruct-q4_k_m.gguf"),
+    resolve(homedir(), "models/Qwen3-8B-abliterated-q4_k_m.gguf"),
   q4BaseUrl: process.env.LOCAL_QWEN_Q4_URL?.trim() || "http://127.0.0.1:8080/v1",
-  q5Model: process.env.LOCAL_QWEN_Q5_MODEL?.trim() || "openai/qwen2.5-coder-14b-instruct-q5_k_m",
+  q5Model: process.env.LOCAL_QWEN_Q5_MODEL?.trim() || "openai/qwen3-14b-abliterated-Q4_K_M",
   q5ModelPath:
     process.env.LOCAL_QWEN_Q5_PATH?.trim() ||
-    resolve(homedir(), "models/qwen2.5-coder-14b-instruct-q5_k_m.gguf"),
+    resolve(homedir(), "models/qwen3-14b-abliterated-Q4_K_M.gguf"),
   q5BaseUrl: process.env.LOCAL_QWEN_Q5_URL?.trim() || "http://127.0.0.1:8080/v1",
+  maxSteps: 16,
 };
 
 function parseMode(val: unknown): ModelMode {
@@ -51,6 +53,10 @@ export async function readModelSettings(): Promise<ModelSettings> {
       q5Model: strOr(raw.q5Model, DEFAULT_MODEL_SETTINGS.q5Model),
       q5ModelPath: strOr(raw.q5ModelPath, DEFAULT_MODEL_SETTINGS.q5ModelPath),
       q5BaseUrl: strOr(raw.q5BaseUrl, DEFAULT_MODEL_SETTINGS.q5BaseUrl),
+      maxSteps:
+        typeof raw.maxSteps === "number" && raw.maxSteps >= 4 && raw.maxSteps <= 50
+          ? Math.round(raw.maxSteps)
+          : DEFAULT_MODEL_SETTINGS.maxSteps,
     };
   } catch {
     return { ...DEFAULT_MODEL_SETTINGS };
@@ -109,16 +115,23 @@ export async function writeModelSettings(patch: Partial<ModelSettings>): Promise
     q5Model: strOr(patch.q5Model, current.q5Model),
     q5ModelPath: strOr(patch.q5ModelPath, current.q5ModelPath),
     q5BaseUrl: strOr(patch.q5BaseUrl, current.q5BaseUrl),
+    maxSteps:
+      typeof patch.maxSteps === "number" && patch.maxSteps >= 4 && patch.maxSteps <= 50
+        ? Math.round(patch.maxSteps)
+        : current.maxSteps,
   };
 
-  if (next.mode === "cloud") {
-    await stopLlamaServer();
-  } else if (next.mode === "q4") {
-    await ensureLlamaServer(next.q4ModelPath, next.q4BaseUrl);
-  } else if (next.mode === "q5") {
-    await ensureLlamaServer(next.q5ModelPath, next.q5BaseUrl);
+  if (patch.mode !== undefined) {
+    if (patch.mode !== undefined) {
+      if (next.mode === "cloud") {
+        await stopLlamaServer();
+      } else if (next.mode === "q4") {
+        await ensureLlamaServer(next.q4ModelPath, next.q4BaseUrl);
+      } else if (next.mode === "q5") {
+        await ensureLlamaServer(next.q5ModelPath, next.q5BaseUrl);
+      }
+    }
   }
-
-  await writeFile(SETTINGS_PATH, JSON.stringify(next, null, 2), "utf8");
+  await writeFile(SETTINGS_PATH, `${JSON.stringify(next, null, 2)}\n`, "utf8");
   return next;
 }

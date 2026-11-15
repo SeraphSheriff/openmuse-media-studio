@@ -1,3 +1,4 @@
+import { getVideoProgress } from "./comfy-video.ts";
 import { readModelSettings, writeModelSettings } from "./model-settings.ts";
 import {
   DEFAULT_VIDEO_SETTINGS,
@@ -55,7 +56,9 @@ export async function createApp(
   const browser = new BrowserService(db, config, auth, files);
   const computer = new ComputerService(db, config, options.docker);
   const agent = new AgentService(db, config, workspace, files, actions, browser, computer);
-  const intelligence = new CopilotKitIntelligence({ apiKey: config.intelligenceApiKey });
+  const intelligence = config.intelligenceApiKey
+    ? new CopilotKitIntelligence({ apiKey: config.intelligenceApiKey })
+    : undefined;
   const runtime = makeRuntime(config, agent, auth, intelligence);
   const app = new Hono<{ Variables: { owner: string } }>();
   const origins = new Set([...config.allowedOrigins, new URL(config.publicUrl).origin]);
@@ -83,7 +86,17 @@ export async function createApp(
       onError: (c) => c.json({ error: "Request is too large; PDFs must be 10 MB or smaller" }, 413),
     }),
   );
-  app.use("/api/*", rateLimit(Boolean(config.trustProxy)));
+  app.use("/api/*", async (c, next) => {
+    const p = c.req.path;
+    if (
+      p === "/api/comfy-control" ||
+      p === "/api/media-gallery" ||
+      p === "/api/video-progress" ||
+      p.startsWith("/media-file/")
+    )
+      return next();
+    return rateLimit(Boolean(config.trustProxy))(c, next);
+  });
   app.onError((error, c) => {
     if (error instanceof z.ZodError)
       return c.json({ error: error.issues.map((i) => i.message).join("; ") }, 422);
@@ -233,14 +246,16 @@ export async function createApp(
       threadId: nextId,
       existing: false,
     });
-    try {
-      await intelligence.getOrCreateThread({
-        threadId: nextId,
-        userId: owner,
-        agentId: "default",
-      });
-    } catch {
-      // Thread will be initialized lazily on first run if intelligence service is offline
+    if (intelligence) {
+      try {
+        await intelligence.getOrCreateThread({
+          threadId: nextId,
+          userId: owner,
+          agentId: "default",
+        });
+      } catch {
+        // Thread will be initialized lazily on first run if intelligence service is offline
+      }
     }
     return c.json({ threadId: nextId, existing: false });
   });
@@ -253,17 +268,19 @@ export async function createApp(
     });
     const main = await db.get<{ threadId: string }>(owner, "conversation-settings", "main");
     if (!main) throw new AppError("Main conversation could not be loaded", 503);
-    try {
-      await intelligence.getOrCreateThread({
-        threadId: main.threadId,
-        userId: owner,
-        agentId: "default",
-      });
-    } catch {
-      throw new AppError(
-        "Main conversation is unavailable. Check the Rich Threads connection and try again.",
-        502,
-      );
+    if (intelligence) {
+      try {
+        await intelligence.getOrCreateThread({
+          threadId: main.threadId,
+          userId: owner,
+          agentId: "default",
+        });
+      } catch {
+        throw new AppError(
+          "Main conversation is unavailable. Check the Rich Threads connection and try again.",
+          502,
+        );
+      }
     }
     return c.json({ threadId: main.threadId, existing: true });
   });
@@ -386,6 +403,299 @@ export async function createApp(
     );
     return new Response(body, { status: response.status, headers: response.headers });
   });
+  app.get("/api/video-progress", (c) => c.json(getVideoProgress()));
+  app.get("/api/comfy-control", async (c) => {
+    const { readFile } = await import("node:fs/promises");
+    const { homedir } = await import("node:os");
+    const { resolve } = await import("node:path");
+    let lines: Array<{ id: string; text: string }> = [];
+    try {
+      const txt = await readFile(resolve(homedir(), "ComfyUI/comfy.log"), "utf8");
+      const raw = txt
+        .replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g"), "")
+        .split(/\r?\n/)
+        .filter(Boolean);
+      const start = Math.max(0, raw.length - 85);
+      lines = raw.slice(start).map((text, idx) => ({ id: `L${start + idx}`, text }));
+    } catch {
+      lines = [{ id: "L0", text: "Waiting for ~/ComfyUI/comfy.log..." }];
+    }
+    let vramUsedGb = 0;
+    let vramTotalGb = 0;
+    let running = 0;
+    let pending = 0;
+    try {
+      const [stRes, qRes] = await Promise.all([
+        fetch("http://127.0.0.1:8188/system_stats"),
+        fetch("http://127.0.0.1:8188/queue"),
+      ]);
+      if (stRes.ok) {
+        const st = (await stRes.json()) as {
+          devices?: Array<{ vram_total?: number; vram_free?: number }>;
+        };
+        const dev = st.devices?.at(0);
+        if (dev?.vram_total) {
+          vramTotalGb = +(dev.vram_total / 1024 ** 3).toFixed(1);
+          vramUsedGb = +((dev.vram_total - (dev.vram_free ?? 0)) / 1024 ** 3).toFixed(1);
+        }
+      }
+      if (qRes.ok) {
+        const q = (await qRes.json()) as { queue_running?: unknown[]; queue_pending?: unknown[] };
+        running = q.queue_running?.length ?? 0;
+        pending = q.queue_pending?.length ?? 0;
+      }
+    } catch {}
+    return c.json({ lines, vramUsedGb, vramTotalGb, running, pending });
+  });
+
+  app.post("/api/comfy-control", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { action?: string };
+    if (body.action === "interrupt") {
+      await fetch("http://127.0.0.1:8188/interrupt", { method: "POST" });
+    } else if (body.action === "clear") {
+      await fetch("http://127.0.0.1:8188/queue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clear: true }),
+      });
+    } else if (body.action === "free") {
+      await fetch("http://127.0.0.1:8188/free", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ unload_models: true, free_memory: true }),
+      });
+    }
+    return c.json({ ok: true });
+  });
+
+  app.get("/api/model-storage", async (c) => {
+    const { readFile, stat } = await import("node:fs/promises");
+    const { homedir } = await import("node:os");
+    const { resolve } = await import("node:path");
+    const localDefault = resolve(homedir(), "ComfyUI/models");
+    let sharedPath = process.env.COMFY_SHARED_MODELS_DIR?.trim() || "";
+    if (!sharedPath) {
+      for (const d of ["a", "d", "e", "f", "g", "c"]) {
+        for (const folder of ["AI_Models", "Models"]) {
+          const cand = `/mnt/${d}/${folder}`;
+          try {
+            if ((await stat(cand)).isDirectory()) {
+              sharedPath = cand;
+              break;
+            }
+          } catch {}
+        }
+        if (sharedPath) break;
+      }
+    }
+    const formatLabel = (p: string) => {
+      const m = p.match(/^\/mnt\/([a-z])\/(.*)$/i);
+      return m
+        ? `${m[1].toUpperCase()}:\\${m[2].replaceAll("/", "\\")}`
+        : p.replace(homedir(), "~");
+    };
+    let active = sharedPath || localDefault;
+    try {
+      const raw = JSON.parse(
+        await readFile(resolve(process.cwd(), "model-storage.json"), "utf8"),
+      ) as { path?: string };
+      if (raw.path) active = raw.path;
+    } catch {}
+    return c.json({
+      path: active,
+      sharedPath,
+      sharedLabel: sharedPath ? formatLabel(sharedPath) : "",
+      localDefault,
+      localLabel: formatLabel(localDefault),
+    });
+  });
+
+  app.post("/api/model-storage", async (c) => {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const { homedir } = await import("node:os");
+    const { join, resolve } = await import("node:path");
+    const body = (await c.req.json().catch(() => ({}))) as { path?: string };
+    const localDefault = resolve(homedir(), "ComfyUI/models");
+    const target = (body.path || localDefault).trim().replace(/[/]+$/, "");
+    for (const sub of [
+      "checkpoints",
+      "diffusion_models",
+      "text_encoders",
+      "vae",
+      "loras",
+      "clip_vision",
+      "upscale_models",
+      "latent_upscale_models",
+    ]) {
+      await mkdir(join(target, sub), { recursive: true });
+    }
+    const isComfyDefault = target === localDefault;
+    const yaml = isComfyDefault
+      ? ""
+      : [
+          "shared_models:",
+          `  base_path: ${target}/`,
+          "  is_default: true",
+          "  checkpoints: checkpoints/",
+          "  diffusion_models: diffusion_models/",
+          "  text_encoders: text_encoders/",
+          "  vae: vae/",
+          "  loras: loras/",
+          "  clip_vision: clip_vision/",
+          "  upscale_models: upscale_models/",
+          "",
+        ].join("\n");
+    await writeFile(resolve(homedir(), "ComfyUI/extra_model_paths.yaml"), yaml, "utf8");
+    await writeFile(
+      resolve(process.cwd(), "model-storage.json"),
+      `${JSON.stringify({ path: target }, null, 2)}\n`,
+      "utf8",
+    );
+    return c.json({ ok: true, path: target, localDefault });
+  });
+
+  app.get("/api/media-gallery", async (c) => {
+    const { readdir, stat } = await import("node:fs/promises");
+    const { resolve } = await import("node:path");
+    const genDir = resolve(process.cwd(), "generated");
+    try {
+      const names = await readdir(genDir);
+      const items: Array<{
+        name: string;
+        kind: "image" | "video";
+        sizeKb: number;
+        mtimeMs: number;
+        url: string;
+      }> = [];
+      for (const name of names) {
+        if (!/\.(png|jpe?g|webp|gif|mp4|webm)$/i.test(name)) continue;
+        const st = await stat(resolve(genDir, name));
+        if (!st.isFile()) continue;
+        items.push({
+          name,
+          kind: /\.(mp4|webm)$/i.test(name) ? "video" : "image",
+          sizeKb: Math.round(st.size / 1024),
+          mtimeMs: st.mtimeMs,
+          url: `/media-file/${encodeURIComponent(name)}`,
+        });
+      }
+      items.sort((a, b) => b.mtimeMs - a.mtimeMs);
+      return c.json({ items: items.slice(0, 60) });
+    } catch {
+      return c.json({ items: [] });
+    }
+  });
+
+  app.get("/avatar-image", async (_c) => {
+    const { readFile } = await import("node:fs/promises");
+    const { resolve } = await import("node:path");
+    const custom = resolve(process.cwd(), "generated/custom-avatar.png");
+    const fallback = resolve(process.cwd(), "apps/mobile/assets/capybara.png");
+    let buf: Buffer;
+    try {
+      buf = await readFile(custom);
+    } catch {
+      buf = await readFile(fallback);
+    }
+    return new Response(new Uint8Array(buf), {
+      status: 200,
+      headers: { "Content-Type": "image/png", "Cache-Control": "no-store" },
+    });
+  });
+
+  app.post("/api/avatar", async (c) => {
+    const { copyFile, mkdir, rm, writeFile } = await import("node:fs/promises");
+    const { basename, resolve } = await import("node:path");
+    const body = (await c.req.json()) as {
+      dataBase64?: string;
+      existingName?: string;
+      reset?: boolean;
+    };
+    const custom = resolve(process.cwd(), "generated/custom-avatar.png");
+    if (body.reset) {
+      await rm(custom, { force: true });
+      return c.json({ ok: true, ts: Date.now() });
+    }
+    await mkdir(resolve(process.cwd(), "generated"), { recursive: true });
+    if (body.existingName) {
+      const src = resolve(process.cwd(), "generated", basename(body.existingName));
+      await copyFile(src, custom);
+      return c.json({ ok: true, ts: Date.now() });
+    }
+    const b64 = (body.dataBase64 || "").replace(/^data:[^;]+;base64,/, "");
+    if (!b64) return c.json({ ok: false, error: "No image provided" }, 400);
+    await writeFile(custom, Buffer.from(b64, "base64"));
+    return c.json({ ok: true, ts: Date.now() });
+  });
+  app.get("/media-file/:name", async (c) => {
+    const { readFile } = await import("node:fs/promises");
+    const { basename, resolve } = await import("node:path");
+    const safeName = basename(decodeURIComponent(c.req.param("name")));
+    try {
+      const buf = await readFile(resolve(process.cwd(), "generated", safeName));
+      const ext = safeName.split(".").pop()?.toLowerCase() ?? "";
+      const ct =
+        ext === "mp4"
+          ? "video/mp4"
+          : ext === "webm"
+            ? "video/webm"
+            : ext === "webp"
+              ? "image/webp"
+              : ext === "gif"
+                ? "image/gif"
+                : ext === "jpg" || ext === "jpeg"
+                  ? "image/jpeg"
+                  : "image/png";
+      const bytes = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+      const range = c.req.header("range");
+      if (range?.startsWith("bytes=")) {
+        const [sStr, eStr] = range.slice(6).split("-");
+        const start = Math.max(0, Number.parseInt(sStr || "0", 10) || 0);
+        const end = Math.min(
+          bytes.byteLength - 1,
+          eStr ? Number.parseInt(eStr, 10) : bytes.byteLength - 1,
+        );
+        const chunk = bytes.slice(start, end + 1);
+        return new Response(chunk, {
+          status: 206,
+          headers: {
+            "Content-Type": ct,
+            "Content-Range": `bytes ${start}-${end}/${bytes.byteLength}`,
+            "Accept-Ranges": "bytes",
+            "Content-Length": String(chunk.byteLength),
+          },
+        });
+      }
+      return new Response(bytes, {
+        status: 200,
+        headers: {
+          "Content-Type": ct,
+          "Accept-Ranges": "bytes",
+          "Content-Length": String(bytes.byteLength),
+          "Cache-Control": "no-cache",
+        },
+      });
+    } catch {
+      return c.json({ error: "Not found" }, 404);
+    }
+  });
+
+  app.post("/api/media-upload", async (c) => {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const { basename, resolve } = await import("node:path");
+    const body = (await c.req.json()) as { name?: string; dataBase64?: string };
+    const rawName = basename(
+      (body.name || `upload-${Date.now()}.png`).replace(/[^a-zA-Z0-9._-]/g, "_"),
+    );
+    const b64 = (body.dataBase64 || "").replace(/^data:[^;]+;base64,/, "");
+    if (!b64) return c.json({ ok: false, error: "Empty file" }, 400);
+    const genDir = resolve(process.cwd(), "generated");
+    await mkdir(genDir, { recursive: true });
+    const full = resolve(genDir, rawName);
+    await writeFile(full, Buffer.from(b64, "base64"));
+    return c.json({ ok: true, name: rawName, savedPath: full });
+  });
+
   app.get("/api/model-settings", async (c) => c.json(await readModelSettings()));
   app.post("/api/model-settings", async (c) => {
     const body = z
@@ -397,6 +707,7 @@ export async function createApp(
         q5Model: z.string().min(1).max(200).optional(),
         q5ModelPath: z.string().min(1).max(400).optional(),
         q5BaseUrl: z.string().min(1).max(300).optional(),
+        maxSteps: z.number().int().min(4).max(50).optional(),
       })
       .parse(await c.req.json());
     return c.json(await writeModelSettings(body));

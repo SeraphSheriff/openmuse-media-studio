@@ -12,7 +12,7 @@ import {
   SquareCheck,
   X,
 } from "lucide-react-native";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   AppState,
@@ -40,7 +40,18 @@ import { Details } from "./src/details";
 import { BrowserScreen, CalendarScreen, FilesScreen, MailScreen } from "./src/screens";
 import { useThemeMode } from "./src/theme";
 import { ThreadsProvider, ThreadsSheet, useMuseThread } from "./src/threads";
-import { Button, Card, colors, ErrorNotice, Field, IconButton, Mascot, Sheet, s } from "./src/ui";
+import {
+  Button,
+  Card,
+  colors,
+  ErrorNotice,
+  Field,
+  IconButton,
+  Mascot,
+  notifyAvatarUpdated,
+  Sheet,
+  s,
+} from "./src/ui";
 import { VideoSettingsModal } from "./src/VideoSettingsModal";
 import { type Detail, useWorkspace, WorkspaceContext } from "./src/workspace";
 
@@ -68,6 +79,723 @@ const titles: Partial<Record<Section, { title: string; subtitle: string }>> = {
   browser: { title: "Browser", subtitle: "Your connected browsing sessions." },
   files: { title: "Files", subtitle: "Documents, forms and filled copies." },
 };
+interface ComfyControlState {
+  lines: Array<{ id: string; text: string }>;
+  vramUsedGb: number;
+  vramTotalGb: number;
+  running: number;
+  pending: number;
+}
+
+function ComfyLogDock({ api }: { api: ReturnType<typeof useWorkspace>["api"] }) {
+  const [open, setOpen] = useState(true);
+  const [logOpen, setLogOpen] = useState(true);
+  const [paused, setPaused] = useState(false);
+  const [ctrl, setCtrl] = useState<ComfyControlState>({
+    lines: [],
+    vramUsedGb: 0,
+    vramTotalGb: 0,
+    running: 0,
+    pending: 0,
+  });
+  const [storagePath, setStoragePath] = useState("/mnt/a/AI_Models");
+  const [sharedPath, setSharedPath] = useState("");
+  const [sharedLabel, setSharedLabel] = useState("");
+  const [localDefault, setLocalDefault] = useState("");
+  const [localLabel, setLocalLabel] = useState("~/ComfyUI/models");
+  const [maxSteps, setMaxSteps] = useState(16);
+  const scrollRef = useRef<ScrollView | null>(null);
+
+  useEffect(() => {
+    api
+      .request<{
+        path?: string;
+        sharedPath?: string;
+        sharedLabel?: string;
+        localDefault?: string;
+        localLabel?: string;
+      }>("/api/model-storage")
+      .then((r) => {
+        if (r?.path) setStoragePath(r.path);
+        if (r?.sharedPath !== undefined) setSharedPath(r.sharedPath);
+        if (r?.sharedLabel !== undefined) setSharedLabel(r.sharedLabel);
+        if (r?.localDefault) setLocalDefault(r.localDefault);
+        if (r?.localLabel) setLocalLabel(r.localLabel);
+      });
+    api
+      .request<{ maxSteps?: number }>("/api/model-settings")
+      .then((r) => {
+        if (typeof r?.maxSteps === "number") setMaxSteps(r.maxSteps);
+      })
+      .catch(() => {});
+  }, [api]);
+
+  useEffect(() => {
+    if (paused) return;
+    let dead = false;
+    const load = () =>
+      api
+        .request<ComfyControlState>("/api/comfy-control")
+        .then((r) => {
+          if (!dead && r?.lines) setCtrl(r);
+        })
+        .catch(() => {});
+    void load();
+    const iv = setInterval(load, 2500);
+    return () => {
+      dead = true;
+      clearInterval(iv);
+    };
+  }, [api, paused]);
+
+  const changeMaxSteps = (delta: number) => {
+    const next = Math.min(50, Math.max(4, maxSteps + delta));
+    setMaxSteps(next);
+    void api
+      .request<{ maxSteps?: number }>("/api/model-settings", { maxSteps: next })
+      .then((r) => {
+        if (typeof r?.maxSteps === "number") setMaxSteps(r.maxSteps);
+      })
+      .catch(() => {});
+  };
+  const sendAction = (action: "interrupt" | "clear" | "free") => {
+    void api.request("/api/comfy-control", { action }).catch(() => {});
+  };
+
+  const pickStorage = (nextPath: string) => {
+    const clean = nextPath.trim();
+    if (!clean) return;
+    setStoragePath(clean);
+    void api
+      .request<{ path?: string }>("/api/model-storage", { path: clean })
+      .then((r) => {
+        if (r?.path) setStoragePath(r.path);
+      })
+      .catch(() => {});
+  };
+
+  if (!open) {
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Show ComfyUI control panel"
+        onPress={() => setOpen(true)}
+        style={{
+          position: "absolute",
+          left: 14,
+          top: 16,
+          zIndex: 30,
+          paddingHorizontal: 10,
+          height: 32,
+          borderRadius: 16,
+          backgroundColor: colors.card,
+          borderWidth: 1,
+          borderColor: colors.line,
+          justifyContent: "center",
+        }}
+      >
+        <Text style={{ fontSize: 11, fontWeight: "600", color: colors.text }}>ComfyUI ▸</Text>
+      </Pressable>
+    );
+  }
+
+  const vramPct =
+    ctrl.vramTotalGb > 0
+      ? Math.min(100, Math.round((ctrl.vramUsedGb / ctrl.vramTotalGb) * 100))
+      : 0;
+  const barPct = vramPct > 0 ? Math.max(vramPct, 6) : 0;
+  const sectionHeaderStyle = { fontSize: 12, fontWeight: "700" as const, color: colors.text };
+
+  return (
+    <View
+      style={{
+        position: "absolute",
+        left: 14,
+        top: 16,
+        bottom: logOpen ? 16 : undefined,
+        width: 315,
+        zIndex: 25,
+        backgroundColor: colors.card,
+        borderWidth: 1,
+        borderColor: colors.line,
+        borderRadius: 18,
+        overflow: "hidden",
+      }}
+    >
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          paddingHorizontal: 12,
+          paddingVertical: 9,
+          borderBottomWidth: 1,
+          borderBottomColor: colors.line,
+        }}
+      >
+        <Text style={sectionHeaderStyle}>ComfyUI Control</Text>
+        <Pressable
+          onPress={() => setOpen(false)}
+          style={{
+            paddingHorizontal: 8,
+            paddingVertical: 3,
+            borderRadius: 8,
+            backgroundColor: colors.canvas,
+          }}
+        >
+          <Text style={{ fontSize: 10.5, fontWeight: "600", color: colors.muted }}>Hide</Text>
+        </Pressable>
+      </View>
+
+      <View
+        style={{
+          paddingHorizontal: 12,
+          paddingVertical: 9,
+          gap: 8,
+          borderBottomWidth: 1,
+          borderBottomColor: colors.line,
+        }}
+      >
+        <View
+          style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}
+        >
+          <Text style={sectionHeaderStyle}>
+            VRAM {ctrl.vramUsedGb}/{ctrl.vramTotalGb || 24} GB ({vramPct}%)
+          </Text>
+          <Text style={{ fontSize: 11, color: ctrl.running > 0 ? colors.green : colors.muted }}>
+            Run: {ctrl.running} · Q: {ctrl.pending}
+          </Text>
+        </View>
+        <View
+          style={{ height: 7, borderRadius: 4, backgroundColor: "#1F2937", overflow: "hidden" }}
+        >
+          <View
+            style={{
+              height: "100%",
+              width: `${barPct}%`,
+              backgroundColor: vramPct > 88 ? "#EF4444" : vramPct > 70 ? "#F59E0B" : "#10B981",
+              borderRadius: 4,
+            }}
+          />
+        </View>
+        <View style={{ flexDirection: "row", gap: 6 }}>
+          <Pressable
+            onPress={() => sendAction("interrupt")}
+            style={{
+              flex: 1,
+              paddingVertical: 5,
+              borderRadius: 8,
+              backgroundColor: colors.canvas,
+              alignItems: "center",
+            }}
+          >
+            <Text style={{ fontSize: 11, fontWeight: "600", color: colors.danger }}>
+              Stop Render
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => sendAction("free")}
+            style={{
+              flex: 1,
+              paddingVertical: 5,
+              borderRadius: 8,
+              backgroundColor: colors.canvas,
+              alignItems: "center",
+            }}
+          >
+            <Text style={{ fontSize: 11, fontWeight: "600", color: colors.text }}>Free VRAM</Text>
+          </Pressable>
+        </View>
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            paddingTop: 2,
+          }}
+        >
+          <Text style={{ fontSize: 11, fontWeight: "600", color: colors.text }}>
+            Agent Step Limit
+          </Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            <Pressable
+              onPress={() => changeMaxSteps(-2)}
+              style={{
+                width: 24,
+                height: 22,
+                borderRadius: 6,
+                backgroundColor: colors.canvas,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>−</Text>
+            </Pressable>
+            <Text
+              style={{
+                fontSize: 11.5,
+                fontWeight: "700",
+                color: colors.text,
+                minWidth: 22,
+                textAlign: "center",
+              }}
+            >
+              {maxSteps}
+            </Text>
+            <Pressable
+              onPress={() => changeMaxSteps(2)}
+              style={{
+                width: 24,
+                height: 22,
+                borderRadius: 6,
+                backgroundColor: colors.canvas,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>+</Text>
+            </Pressable>
+          </View>
+        </View>
+
+        <View style={{ gap: 5, paddingTop: 4 }}>
+          <Text style={sectionHeaderStyle} numberOfLines={1}>
+            Download & Save Models To:
+          </Text>
+          <View style={{ flexDirection: "row", gap: 5 }}>
+            {sharedPath ? (
+              <Pressable
+                onPress={() => pickStorage(sharedPath)}
+                style={{
+                  flex: 1,
+                  paddingVertical: 4,
+                  borderRadius: 7,
+                  backgroundColor: storagePath === sharedPath ? colors.blueDark : colors.canvas,
+                  alignItems: "center",
+                }}
+              >
+                <Text
+                  style={{ fontSize: 10.5, fontWeight: "600", color: colors.text }}
+                  numberOfLines={1}
+                >
+                  {sharedLabel}
+                </Text>
+              </Pressable>
+            ) : null}
+            {localDefault ? (
+              <Pressable
+                onPress={() => pickStorage(localDefault)}
+                style={{
+                  flex: 1,
+                  paddingVertical: 4,
+                  borderRadius: 7,
+                  backgroundColor: storagePath === localDefault ? colors.blueDark : colors.canvas,
+                  alignItems: "center",
+                }}
+              >
+                <Text
+                  style={{ fontSize: 10.5, fontWeight: "600", color: colors.text }}
+                  numberOfLines={1}
+                >
+                  {localLabel}
+                </Text>
+              </Pressable>
+            ) : null}
+            <Pressable
+              onPress={() => {
+                const custom =
+                  typeof window !== "undefined"
+                    ? window.prompt("Model download root path:", storagePath)
+                    : null;
+                if (custom) pickStorage(custom);
+              }}
+              style={{
+                paddingHorizontal: 8,
+                paddingVertical: 5,
+                borderRadius: 7,
+                backgroundColor:
+                  storagePath !== "/mnt/a/AI_Models" && storagePath !== localDefault
+                    ? colors.blueDark
+                    : colors.canvas,
+                alignItems: "center",
+              }}
+            >
+              <Text style={{ fontSize: 10.5, fontWeight: "600", color: colors.text }}>Custom…</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          borderBottomWidth: logOpen ? 1 : 0,
+          borderBottomColor: colors.line,
+        }}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={logOpen ? "Collapse console log" : "Expand console log"}
+          onPress={() => setLogOpen((v) => !v)}
+          style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1 }}
+        >
+          <Text style={sectionHeaderStyle}>Console Log</Text>
+          <Text style={{ fontSize: 11, fontWeight: "700", color: colors.muted }}>
+            {logOpen ? "▾" : "▸"}
+          </Text>
+        </Pressable>
+        {logOpen ? (
+          <Pressable
+            onPress={() => setPaused((p) => !p)}
+            style={{
+              paddingHorizontal: 7,
+              paddingVertical: 3,
+              borderRadius: 8,
+              backgroundColor: colors.canvas,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 10.5,
+                fontWeight: "600",
+                color: paused ? colors.orange : colors.muted,
+              }}
+            >
+              {paused ? "Resume" : "Pause"}
+            </Text>
+          </Pressable>
+        ) : null}
+      </View>
+
+      {logOpen ? (
+        <ScrollView
+          ref={scrollRef}
+          onContentSizeChange={() => {
+            if (!paused) scrollRef.current?.scrollToEnd({ animated: false });
+          }}
+          style={{ flex: 1, paddingHorizontal: 10, paddingVertical: 8 }}
+        >
+          {ctrl.lines.map((entry) => (
+            <Text
+              key={entry.id}
+              style={{
+                fontSize: 10.5,
+                lineHeight: 15,
+                fontFamily: "monospace",
+                color: /error|traceback|failed/i.test(entry.text)
+                  ? colors.danger
+                  : /%|prompt executed|loaded/i.test(entry.text)
+                    ? colors.green
+                    : colors.muted,
+                marginBottom: 2,
+              }}
+            >
+              {entry.text}
+            </Text>
+          ))}
+        </ScrollView>
+      ) : null}
+    </View>
+  );
+}
+
+interface MediaGalleryItem {
+  name: string;
+  kind: "image" | "video";
+  sizeKb: number;
+  mtimeMs: number;
+  url: string;
+}
+function MediaGalleryDock({ api }: { api: ReturnType<typeof useWorkspace>["api"] }) {
+  const [open, setOpen] = useState(true);
+  const [items, setItems] = useState<MediaGalleryItem[]>([]);
+  const [dragOver, setDragOver] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [copiedName, setCopiedName] = useState("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const mediaSrc = (u: string) => (u.startsWith("http") ? u : API_URL + u);
+  const refresh = () => {
+    api
+      .request<{ items?: MediaGalleryItem[] }>("/api/media-gallery")
+      .then((r) => {
+        if (Array.isArray(r?.items)) setItems(r.items);
+      })
+      .catch(() => {});
+  };
+  useEffect(() => {
+    refresh();
+    const iv = setInterval(refresh, 8000);
+    return () => clearInterval(iv);
+  }, [api]);
+  const uploadFiles = async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    setUploading(true);
+    try {
+      for (const file of Array.from(fileList)) {
+        const dataBase64 = await new Promise<string>((res, rej) => {
+          const rd = new FileReader();
+          rd.onload = () => res(typeof rd.result === "string" ? rd.result : "");
+          rd.onerror = () => rej(new Error("Read failed"));
+          rd.readAsDataURL(file);
+        });
+        if (!dataBase64) continue;
+        const out = await api.request<{ ok?: boolean; name?: string }>("/api/media-upload", {
+          name: file.name,
+          dataBase64,
+        });
+        if (out?.name) {
+          setCopiedName(out.name);
+          if (typeof navigator !== "undefined" && navigator.clipboard)
+            void navigator.clipboard.writeText(out.name).catch(() => {});
+        }
+      }
+      refresh();
+    } finally {
+      setUploading(false);
+    }
+  };
+  if (!open)
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Show Media Studio panel"
+        onPress={() => setOpen(true)}
+        style={{
+          position: "absolute",
+          right: 14,
+          top: 16,
+          zIndex: 30,
+          paddingHorizontal: 10,
+          height: 32,
+          borderRadius: 16,
+          backgroundColor: colors.card,
+          borderWidth: 1,
+          borderColor: colors.line,
+          justifyContent: "center",
+        }}
+      >
+        <Text style={{ fontSize: 11, fontWeight: "600", color: colors.text }}>◂ Media</Text>
+      </Pressable>
+    );
+  return (
+    <View
+      style={{
+        position: "absolute",
+        right: 14,
+        top: 16,
+        bottom: 16,
+        width: 315,
+        zIndex: 25,
+        backgroundColor: colors.card,
+        borderWidth: 1,
+        borderColor: colors.line,
+        borderRadius: 18,
+        overflow: "hidden",
+      }}
+    >
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          paddingHorizontal: 12,
+          paddingVertical: 9,
+          borderBottomWidth: 1,
+          borderBottomColor: colors.line,
+        }}
+      >
+        <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>Media Studio</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+          <Pressable
+            onPress={refresh}
+            style={{
+              paddingHorizontal: 7,
+              paddingVertical: 3,
+              borderRadius: 8,
+              backgroundColor: colors.canvas,
+            }}
+          >
+            <Text style={{ fontSize: 10.5, fontWeight: "600", color: colors.muted }}>Refresh</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setOpen(false)}
+            style={{
+              paddingHorizontal: 7,
+              paddingVertical: 3,
+              borderRadius: 8,
+              backgroundColor: colors.canvas,
+            }}
+          >
+            <Text style={{ fontSize: 10.5, fontWeight: "600", color: colors.muted }}>Hide</Text>
+          </Pressable>
+        </View>
+      </View>
+      <View
+        style={{
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          borderBottomWidth: 1,
+          borderBottomColor: colors.line,
+        }}
+      >
+        <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text, marginBottom: 6 }}>
+          Input Dropzone:
+        </Text>
+        <button
+          type="button"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") fileInputRef.current?.click();
+          }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragOver(false);
+            void uploadFiles(e.dataTransfer?.files ?? null);
+          }}
+          onClick={() => fileInputRef.current?.click()}
+          style={{
+            border: `1.5px dashed ${dragOver ? "#10B981" : "#374151"}`,
+            borderRadius: 10,
+            padding: "11px 10px",
+            textAlign: "center",
+            backgroundColor: dragOver ? "rgba(16,185,129,0.12)" : "rgba(17,24,39,0.55)",
+            cursor: "pointer",
+            color: "#E5E7EB",
+            fontSize: 11,
+            fontWeight: 600,
+          }}
+        >
+          {uploading ? "Uploading to generated/…" : "Drop images/videos here or click to browse"}
+          {copiedName ? (
+            <div style={{ fontSize: 10, color: "#10B981", marginTop: 4 }}>
+              Saved & copied: {copiedName}
+            </div>
+          ) : null}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*,video/*"
+            multiple
+            style={{ display: "none" }}
+            onChange={(e) => {
+              void uploadFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+        </button>
+      </View>
+      <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}>
+        <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>
+          Generated & Uploaded ({items.length})
+        </Text>
+      </View>
+      <ScrollView style={{ flex: 1, paddingHorizontal: 10, paddingBottom: 10 }}>
+        {items.length === 0 ? (
+          <Text style={{ fontSize: 11, color: colors.muted, padding: 8 }}>
+            No images or videos in generated/ yet.
+          </Text>
+        ) : (
+          items.map((item) => (
+            <View
+              key={item.name}
+              style={{
+                backgroundColor: colors.canvas,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: colors.line,
+                padding: 7,
+                marginBottom: 8,
+                gap: 6,
+              }}
+            >
+              {item.kind === "video" ? (
+                <video
+                  src={mediaSrc(item.url)}
+                  controls
+                  muted
+                  playsInline
+                  style={{
+                    width: "100%",
+                    maxHeight: 155,
+                    borderRadius: 7,
+                    backgroundColor: "#000",
+                  }}
+                />
+              ) : (
+                <img
+                  src={mediaSrc(item.url)}
+                  alt={item.name}
+                  style={{ width: "100%", maxHeight: 165, objectFit: "cover", borderRadius: 7 }}
+                />
+              )}
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 6,
+                }}
+              >
+                <Text
+                  style={{ flex: 1, fontSize: 10.5, fontWeight: "600", color: colors.text }}
+                  numberOfLines={1}
+                >
+                  {item.name}
+                </Text>
+                <Pressable
+                  onPress={() => {
+                    setCopiedName(item.name);
+                    if (typeof navigator !== "undefined" && navigator.clipboard)
+                      void navigator.clipboard.writeText(item.name).catch(() => {});
+                  }}
+                  style={{
+                    paddingHorizontal: 7,
+                    paddingVertical: 3,
+                    borderRadius: 6,
+                    backgroundColor: colors.card,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 10,
+                      fontWeight: "600",
+                      color: copiedName === item.name ? colors.green : colors.text,
+                    }}
+                  >
+                    {copiedName === item.name ? "Copied" : "Copy"}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    if (typeof window !== "undefined")
+                      window.open(mediaSrc(item.url), "_blank", "noopener,noreferrer");
+                  }}
+                  style={{
+                    paddingHorizontal: 7,
+                    paddingVertical: 3,
+                    borderRadius: 6,
+                    backgroundColor: colors.card,
+                  }}
+                >
+                  <Text style={{ fontSize: 10, fontWeight: "600", color: colors.text }}>↗</Text>
+                </Pressable>
+              </View>
+            </View>
+          ))
+        )}
+      </ScrollView>
+    </View>
+  );
+}
+
 export default function App() {
   const [token, setToken] = useState("");
   const [accessKey, setAccessKey] = useState("");
@@ -259,6 +987,7 @@ function WorkspaceShell({
   const [avatarSheetOpen, setAvatarSheetOpen] = useState(false);
   const [modelMode, setModelMode] = useState<"cloud" | "q4" | "q5">("cloud");
   const [modelBusy, setModelBusy] = useState(false);
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
   useEffect(() => {
     void api
       .request<{ mode?: "cloud" | "q4" | "q5" }>("/api/model-settings")
@@ -269,9 +998,9 @@ function WorkspaceShell({
       })
       .catch(() => {});
   }, [api]);
-  async function toggleModelMode() {
-    if (modelBusy) return;
-    const next = modelMode === "cloud" ? "q4" : modelMode === "q4" ? "q5" : "cloud";
+  async function selectModelMode(next: "cloud" | "q4" | "q5") {
+    setModelMenuOpen(false);
+    if (modelBusy || next === modelMode) return;
     setModelBusy(true);
     try {
       const saved = await api.request<{ mode?: "cloud" | "q4" | "q5" }>("/api/model-settings", {
@@ -327,6 +1056,12 @@ function WorkspaceShell({
     <>
       <WorkspaceTools />
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.canvas }} edges={["top", "bottom"]}>
+        {width >= 1180 && (
+          <>
+            <ComfyLogDock api={api} />
+            <MediaGalleryDock api={api} />
+          </>
+        )}
         <View style={{ flex: 1, width: "100%", maxWidth: 760, alignSelf: "center" }}>
           <View
             style={{
@@ -353,14 +1088,8 @@ function WorkspaceShell({
             >
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={
-                  modelMode === "q4"
-                    ? "Active model: Qwen Q4_K_M (tap to switch to Qwen Q5_K_M)"
-                    : modelMode === "q5"
-                      ? "Active model: Qwen Q5_K_M (tap to switch to Gemini Cloud)"
-                      : "Active model: Gemini Cloud (tap to switch to Qwen Q4_K_M)"
-                }
-                onPress={() => void toggleModelMode()}
+                accessibilityLabel="Select active AI model"
+                onPress={() => setModelMenuOpen((v) => !v)}
                 style={{
                   flexDirection: "row",
                   alignItems: "center",
@@ -390,10 +1119,114 @@ function WorkspaceShell({
                   {modelBusy
                     ? "Switching…"
                     : modelMode === "q4"
-                      ? "Qwen Q4"
+                      ? "Qwen3 8B"
                       : modelMode === "q5"
-                        ? "Qwen Q5"
+                        ? "Qwen3 14B"
                         : "Gemini"}
+                </Text>
+                <Text style={{ fontSize: 10, color: colors.muted }}>
+                  {modelMenuOpen ? "▲" : "▼"}
+                </Text>
+              </Pressable>
+
+              {modelMenuOpen && (
+                <View
+                  style={{
+                    position: "absolute",
+                    top: 38,
+                    left: 0,
+                    minWidth: 165,
+                    backgroundColor: colors.card,
+                    borderRadius: 14,
+                    borderWidth: 1,
+                    borderColor: colors.line,
+                    paddingVertical: 4,
+                    zIndex: 50,
+                    shadowColor: "#000",
+                    shadowOpacity: 0.25,
+                    shadowRadius: 8,
+                    elevation: 6,
+                  }}
+                >
+                  {(
+                    [
+                      { id: "cloud", label: "Gemini", dot: colors.muted },
+                      { id: "q4", label: "Qwen3 8B", dot: colors.blueDark },
+                      { id: "q5", label: "Qwen3 14B", dot: "#10B981" },
+                    ] as const
+                  ).map((opt) => (
+                    <Pressable
+                      key={opt.id}
+                      onPress={() => void selectModelMode(opt.id)}
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 8,
+                        paddingHorizontal: 12,
+                        paddingVertical: 9,
+                        backgroundColor: opt.id === modelMode ? colors.canvas : "transparent",
+                      }}
+                    >
+                      <View
+                        style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: opt.dot }}
+                      />
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          fontWeight: opt.id === modelMode ? "700" : "500",
+                          color: colors.text,
+                        }}
+                      >
+                        {opt.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              )}
+            </View>
+            <View
+              style={{ position: "absolute", left: "50%", marginLeft: 134, top: 17, zIndex: 10 }}
+            >
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Open ComfyUI in new tab"
+                onPress={() => {
+                  const u = ["http://", "localhost", ":", "8188"].join("");
+                  if (typeof document !== "undefined") {
+                    const a = document.createElement("a");
+                    a.href = u;
+                    a.target = "_blank";
+                    a.rel = "noopener noreferrer";
+                    a.referrerPolicy = "no-referrer";
+                    a.click();
+                  }
+                }}
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  top: 0,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  paddingHorizontal: 11,
+                  height: 34,
+                  borderRadius: 17,
+                  backgroundColor: colors.card,
+                  borderWidth: 1,
+                  borderColor: colors.line,
+                }}
+              >
+                <Text
+                  numberOfLines={1}
+                  style={
+                    {
+                      fontSize: 12,
+                      fontWeight: "600",
+                      color: colors.text,
+                      whiteSpace: "nowrap",
+                    } as never
+                  }
+                >
+                  ComfyUI ↗
                 </Text>
               </Pressable>
             </View>
@@ -600,16 +1433,80 @@ function WorkspaceShell({
         {avatarSheetOpen && (
           <Sheet
             title="Agent Avatar"
-            subtitle="Future enhancement"
+            subtitle="Change avatar on the fly"
             onClose={() => setAvatarSheetOpen(false)}
           >
-            <Card style={{ gap: 10 }}>
-              <Text style={s.heading}>In-app avatar upload coming soon</Text>
-              <Text style={s.muted}>
-                A future update will let you upload or generate a custom avatar directly from this
-                panel. Until then, you can swap the image file at apps/mobile/assets/capybara.png
-                and restart OpenMuse.
-              </Text>
+            <Card style={{ gap: 12 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                <View style={{ flex: 1, gap: 4 }}>
+                  <Text style={s.heading}>Upload or pick any image</Text>
+                  <Text style={s.muted}>
+                    Updates immediately across the header and chat without restarting.
+                  </Text>
+                </View>
+              </View>
+              <label
+                style={{
+                  display: "block",
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: "1.5px dashed #374151",
+                  textAlign: "center",
+                  cursor: "pointer",
+                  color: "#E5E7EB",
+                  fontSize: 12,
+                  fontWeight: 600,
+                }}
+              >
+                Choose Image File (.png / .jpg / .webp)…
+                <input
+                  type="file"
+                  accept="image/*"
+                  style={{ display: "none" }}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const rd = new FileReader();
+                    rd.onload = () => {
+                      const dataBase64 = typeof rd.result === "string" ? rd.result : "";
+                      if (!dataBase64) return;
+                      void api
+                        .request<{ ok?: boolean; ts?: number }>("/api/avatar", { dataBase64 })
+                        .then((r) => {
+                          if (r?.ok) {
+                            notifyAvatarUpdated(r.ts || Date.now());
+                            setAvatarSheetOpen(false);
+                          }
+                        })
+                        .catch(() => {});
+                    };
+                    rd.readAsDataURL(file);
+                  }}
+                />
+              </label>
+              <Pressable
+                onPress={() => {
+                  void api
+                    .request<{ ok?: boolean; ts?: number }>("/api/avatar", { reset: true })
+                    .then((r) => {
+                      if (r?.ok) {
+                        notifyAvatarUpdated(r.ts || Date.now());
+                        setAvatarSheetOpen(false);
+                      }
+                    })
+                    .catch(() => {});
+                }}
+                style={{
+                  paddingVertical: 8,
+                  borderRadius: 10,
+                  backgroundColor: colors.canvas,
+                  alignItems: "center",
+                }}
+              >
+                <Text style={{ fontSize: 12, fontWeight: "600", color: colors.muted }}>
+                  Reset to Default Avatar
+                </Text>
+              </Pressable>
             </Card>
           </Sheet>
         )}

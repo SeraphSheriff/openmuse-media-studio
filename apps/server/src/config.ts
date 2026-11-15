@@ -77,15 +77,7 @@ export function required(name: string, message: string, value = process.env[name
   return value.trim();
 }
 
-export function assertApiDeploymentConfig(
-  config: Config,
-): asserts config is Config & { intelligenceApiKey: string } {
-  required(
-    "CPK_INTELLIGENCE_API_KEY",
-    intelligenceKeyRequiredMessage,
-    config.intelligenceApiKey ?? "",
-  );
-}
+export function assertApiDeploymentConfig(_config: Config): void {}
 
 /** Accept a full worker URL, or host:port from a platform that omits the scheme. */
 export function browserWorkerUrl(value?: string): string | undefined {
@@ -149,7 +141,7 @@ export function readConfig(): Config {
     agentBackend: backend,
     agentUrl: process.env.AGENT_URL,
     agentToken: process.env.AGENT_TOKEN,
-    intelligenceApiKey: required("CPK_INTELLIGENCE_API_KEY", intelligenceKeyRequiredMessage),
+    intelligenceApiKey: process.env.CPK_INTELLIGENCE_API_KEY?.trim() || undefined,
     googleClientId: process.env.GOOGLE_CLIENT_ID,
     googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,
     googleRedirectUri: `${publicUrl}/api/google/callback`,

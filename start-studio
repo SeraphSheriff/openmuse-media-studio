@@ -11,6 +11,6 @@ nohup pnpm dev:web > web.log 2>&1 &
 sleep 1
 nohup pnpm dev:browser > browser.log 2>&1 &
 if [ -d "$COMFY_PATH" ]; then
-  cd "$COMFY_PATH" && nohup ./venv/bin/python main.py --listen 127.0.0.1 --port 8188 --enable-manager --reserve-vram 2.0 --cache-none > comfy.log 2>&1 &
+  cd "$COMFY_PATH" && nohup ./venv/bin/python main.py --listen 127.0.0.1 --port 8188 --enable-manager --reserve-vram 5.5 --cache-none --disable-pinned-memory > comfy.log 2>&1 &
 fi
 echo "$AGENT_NAME + ComfyUI started: OpenMuse (:8081), ComfyUI (:8188)"

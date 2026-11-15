@@ -4,7 +4,9 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { defineTool } from "@copilotkit/runtime/v2";
 import { z } from "zod";
+import { editLocalZImage, renderLocalZImage } from "./comfy-image.js";
 import { renderLocalVideo } from "./comfy-video.js";
+import { runCopyRegionClone, runLocalVisionInspect } from "./vision-tools.js";
 
 const execFileAsync = promisify(execFile);
 const GEN_DIR = resolve(process.cwd(), "generated");
@@ -64,6 +66,78 @@ async function runGeminiImage(parts: Array<Record<string, unknown>>, prefix: str
 export function mediaTools() {
   return [
     defineTool({
+      name: "inspect_image",
+      description:
+        "Visually inspect a local image using the local Qwen2.5-VL vision model to describe details or locate exact [x1, y1, x2, y2] bounding boxes (0-1000 scale) of anatomical features, objects, or people.",
+      parameters: z.object({
+        imagePath: z
+          .string()
+          .min(1)
+          .describe(
+            "Filename in /home/cowboy/openmuse/generated/ (e.g. maleForm.png) or full path",
+          ),
+        question: z
+          .string()
+          .min(1)
+          .max(1000)
+          .describe(
+            "What to inspect or locate in the image, including requesting [x1, y1, x2, y2] coordinates",
+          ),
+      }),
+      execute: async ({ imagePath, question }) => {
+        try {
+          const analysis = await runLocalVisionInspect(imagePath, question);
+          return { ok: true, analysis };
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      },
+    }),
+
+    defineTool({
+      name: "copy_region",
+      description:
+        "Copy a specific visual region/feature (such as a belly button, tattoo, or facial detail) from one person/location in an image onto another person/location in the same image (or another image), automatically matching skin tone, lighting, and shadow gradients via Poisson seamless cloning.",
+      parameters: z.object({
+        sourceImagePath: z
+          .string()
+          .min(1)
+          .describe("Source image filename in generated/ or full path"),
+        sourceBox: z
+          .array(z.number())
+          .length(4)
+          .describe(
+            "Source bounding box [x1, y1, x2, y2] (0-1000 normalized scale from inspect_image)",
+          ),
+        targetImagePath: z
+          .string()
+          .optional()
+          .describe("Target image path; omit to copy from one person to another in the same image"),
+        targetBox: z
+          .array(z.number())
+          .length(4)
+          .describe(
+            "Target destination bounding box [x1, y1, x2, y2] (0-1000 normalized scale from inspect_image)",
+          ),
+        scaleMultiplier: z.number().min(0.4).max(2.5).optional(),
+        rotationDeg: z.number().min(-180).max(180).optional(),
+        blendMode: z.enum(["normal", "mixed"]).optional(),
+      }),
+      execute: async (params) => {
+        try {
+          const savedPath = await runCopyRegionClone({
+            ...params,
+            sourceBox: params.sourceBox as [number, number, number, number],
+            targetBox: params.targetBox as [number, number, number, number],
+          });
+          return { ok: true, savedPath };
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      },
+    }),
+
+    defineTool({
       name: "generate_image",
       description: "Generate a new AI image from a text prompt and save it to disk.",
       parameters: z.object({
@@ -71,41 +145,67 @@ export function mediaTools() {
         aspectRatio: z.enum(["1:1", "16:9", "9:16", "4:3", "3:4"]).default("1:1"),
       }),
       execute: async ({ prompt, aspectRatio }) => {
-        const g = await runGeminiImage(
-          [{ text: `${prompt}. Aspect ratio: ${aspectRatio}.` }],
-          "image",
-        );
-        if (g.ok) return g;
-        const w = aspectRatio === "16:9" ? 1280 : aspectRatio === "9:16" ? 720 : 1024;
-        const h = aspectRatio === "16:9" ? 720 : aspectRatio === "9:16" ? 1280 : 1024;
-        const res = await fetch(
-          `${pollinationsImageBase()}/${encodeURIComponent(prompt)}?width=${w}&height=${h}&seed=${Math.floor(Math.random() * 1e6)}&nologo=true`,
-        );
-        if (!res.ok) return { ok: false, error: `Fallback error (${res.status})` };
-        return {
-          ok: true,
-          model: "pollinations-flux-free",
-          savedPath: await saveGenerated("image", "jpg", new Uint8Array(await res.arrayBuffer())),
-        };
+        try {
+          const png = await renderLocalZImage(prompt, aspectRatio);
+          return {
+            ok: true,
+            model: "z-image-turbo-bf16",
+            savedPath: await saveGenerated("image", "png", png),
+          };
+        } catch {
+          const g = await runGeminiImage(
+            [{ text: `${prompt}. Aspect ratio: ${aspectRatio}.` }],
+            "image",
+          );
+          if (g.ok) return g;
+          const w = aspectRatio === "16:9" ? 1280 : aspectRatio === "9:16" ? 720 : 1024;
+          const h = aspectRatio === "16:9" ? 720 : aspectRatio === "9:16" ? 1280 : 1024;
+          const res = await fetch(
+            `${pollinationsImageBase()}/${encodeURIComponent(prompt)}?width=${w}&height=${h}&seed=${Math.floor(Math.random() * 1e6)}&nologo=true`,
+          );
+          if (!res.ok) return { ok: false, error: `Fallback error (${res.status})` };
+          return {
+            ok: true,
+            model: "pollinations-flux-free",
+            savedPath: await saveGenerated("image", "jpg", new Uint8Array(await res.arrayBuffer())),
+          };
+        }
       },
     }),
 
     defineTool({
       name: "edit_image",
       description: "Modify or restyle an existing local image file using a text prompt.",
-      parameters: z.object({ imagePath: z.string().min(1), prompt: z.string().min(1).max(2000) }),
+      parameters: z.object({
+        imagePath: z
+          .string()
+          .min(1)
+          .describe(
+            "Filename in /home/cowboy/openmuse/generated/ (e.g. 'maleForm.png') or full local path",
+          ),
+        prompt: z.string().min(1).max(2000),
+      }),
       execute: async ({ imagePath, prompt }) => {
         const abs = resolve(imagePath);
-        const bytes = await readFile(abs);
-        const mimeType = abs.endsWith(".webp")
-          ? "image/webp"
-          : /\.jpe?g$/i.test(abs)
-            ? "image/jpeg"
-            : "image/png";
-        return runGeminiImage(
-          [{ inlineData: { mimeType, data: bytes.toString("base64") } }, { text: prompt }],
-          "edited",
-        );
+        try {
+          const png = await editLocalZImage(abs, prompt);
+          return {
+            ok: true,
+            model: "z-image-turbo-bf16",
+            savedPath: await saveGenerated("edited", "png", png),
+          };
+        } catch {
+          const bytes = await readFile(abs);
+          const mimeType = abs.endsWith(".webp")
+            ? "image/webp"
+            : /\.jpe?g$/i.test(abs)
+              ? "image/jpeg"
+              : "image/png";
+          return runGeminiImage(
+            [{ inlineData: { mimeType, data: bytes.toString("base64") } }, { text: prompt }],
+            "edited",
+          );
+        }
       },
     }),
 
