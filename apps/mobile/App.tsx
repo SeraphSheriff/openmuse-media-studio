@@ -3,6 +3,7 @@ import { StatusBar } from "expo-status-bar";
 import {
   Bell,
   Check,
+  CircleHelp,
   Lightbulb,
   type LucideIcon,
   Menu,
@@ -61,6 +62,7 @@ const nav: { id: Section; label: string; icon: LucideIcon }[] = [
   { id: "ideas", label: "Ideas", icon: Lightbulb },
   { id: "goals", label: "Goals", icon: SquareCheck },
   { id: "apps", label: "Apps", icon: Shapes },
+  { id: "help", label: "Help", icon: CircleHelp },
 ];
 const titles: Partial<Record<Section, { title: string; subtitle: string }>> = {
   activity: { title: "Activity", subtitle: "Plans, progress, decisions and results." },
@@ -72,6 +74,10 @@ const titles: Partial<Record<Section, { title: string; subtitle: string }>> = {
   apps: {
     title: "Apps",
     subtitle: "Connections, capabilities and what your agent remembers.",
+  },
+  help: {
+    title: "Studio Help & Prompts",
+    subtitle: "Directions, tips, and 1-click example prompts for all local media tools.",
   },
   connections: { title: "Apps", subtitle: "Connections and capabilities." },
   mail: { title: "Mail", subtitle: "The conversations behind your work." },
@@ -87,10 +93,217 @@ interface ComfyControlState {
   pending: number;
 }
 
-function ComfyLogDock({ api }: { api: ReturnType<typeof useWorkspace>["api"] }) {
+function HelpScreen() {
+  const [copiedId, setCopiedId] = useState("");
+  const copyPrompt = (id: string, prompt: string) => {
+    setCopiedId(id);
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      void navigator.clipboard.writeText(prompt).catch(() => {});
+    }
+  };
+
+  const guides = [
+    {
+      id: "voice",
+      badge: "Qwen3-TTS 1.7B · Zero-Shot Voice Cloning",
+      title: "1. Record & Clone Your Voice + Add to Video",
+      steps: [
+        "Click ● Record Voice Sample (Mic) in the right Media Studio panel (or drop any 3–15s .wav/.mp3 clip into the dropzone). Recordings auto-convert to 24kHz mono .wav and copy their filename.",
+        "Paste the filename into a chat prompt with the new dialogue you want spoken. Optional: include the exact words spoken in your sample for even closer cadence matching.",
+        "Once voice-<timestamp>.mp3 appears in Media Studio, ask OpenMuse to mux or mix it onto any .mp4 video.",
+      ],
+      examples: [
+        {
+          id: "ex-voice-1",
+          label: "Generate Cloned Voiceover",
+          prompt:
+            'Use mic-voice-1794719963669.wav to say: "Welcome back to OpenMuse Media Studio. Everything is running locally on the Predator workstation."',
+        },
+        {
+          id: "ex-voice-2",
+          label: "Add Voiceover to Video",
+          prompt: "Add voice-123.mp3 onto video-456.mp4",
+        },
+      ],
+    },
+    {
+      id: "image",
+      badge: "Z-Image-Turbo · Local ComfyUI",
+      title: "2. Generate & Edit Images",
+      steps: [
+        "Describe any scene, portrait, or concept in chat—OpenMuse renders locally via Z-Image-Turbo and drops the result into Media Studio.",
+        "To edit an existing image, drop it into Media Studio (or click Copy on any gallery card) and ask OpenMuse to restyle, swap outfits, or adjust lighting.",
+      ],
+      examples: [
+        {
+          id: "ex-img-1",
+          label: "Generate New Image",
+          prompt:
+            "Generate a cinematic 35mm portrait of a cyberpunk detective standing in neon rain at night.",
+        },
+        {
+          id: "ex-img-2",
+          label: "Edit Existing Image",
+          prompt:
+            "Edit image-123.png to change the background to a sunset desert highway with warm golden hour lighting.",
+        },
+      ],
+    },
+    {
+      id: "vision",
+      badge: "Qwen2.5-VL 7B + OpenCV Poisson Blending",
+      title: "3. Visual Inspection & Seamless Feature Cloning",
+      steps: [
+        "Ask OpenMuse to inspect any image in generated/—Qwen2.5-VL spins up on-demand, analyzes details or locates coordinates, and immediately frees VRAM afterward.",
+        "Use copy_region to transfer a specific detail (tattoo, facial feature, object) from one person or image onto another with automatic skin-tone and lighting blending.",
+      ],
+      examples: [
+        {
+          id: "ex-vis-1",
+          label: "Inspect Image Details",
+          prompt:
+            "Inspect uploaded-photo.png and describe the lighting, pose, and exact positions of the subjects.",
+        },
+        {
+          id: "ex-vis-2",
+          label: "Seamless Feature Copy",
+          prompt:
+            "Copy the tattoo from the left person in photo.png onto the right person's forearm using seamless cloning.",
+        },
+      ],
+    },
+    {
+      id: "video",
+      badge: "LTX-2.3 Uncensored · T2V & I2V",
+      title: "4. Text-to-Video & Image-to-Video Animation",
+      steps: [
+        "Click Video Studio in the top-left menu (☰) to switch between Text-to-Video (T2V) and Image-to-Video (I2V) workflow templates or set default clip length.",
+        "Ask OpenMuse to generate a clip from a prompt or animate any image from your right-side Media Studio gallery.",
+      ],
+      examples: [
+        {
+          id: "ex-vid-1",
+          label: "Animate a Gallery Image",
+          prompt:
+            "Animate image-123.png into a 5-second slow-motion tracking shot with wind blowing through hair and dust particles in the air.",
+        },
+      ],
+    },
+    {
+      id: "workspace",
+      badge: "Workstation Controls & Shortcuts",
+      title: "5. Panels, Logs, Avatar & Memory Tips",
+      steps: [
+        "Resizable Side Panels: Drag the thin vertical slider on the inner edge of either side dock to widen it up to the chat column; double-click the grabber dot to reset.",
+        "Console Log Filters: Switch between All, Info, Warn, and Error while color-coded badges distinguish ComfyUI, LLM, Vision, and Studio logs.",
+        "On-the-Fly Avatar: Click your avatar in the top header to upload a custom image anytime, or click Avatar on any image card in Media Studio.",
+      ],
+      examples: [],
+    },
+  ];
+
+  return (
+    <ScrollView contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: 32 }}>
+      {guides.map((g) => (
+        <Card key={g.id} style={{ gap: 10 }}>
+          <Text style={{ fontSize: 11, fontWeight: "700", color: colors.blue }}>{g.badge}</Text>
+          <Text style={s.heading}>{g.title}</Text>
+          <View style={{ gap: 6 }}>
+            {g.steps.map((step) => (
+              <Text key={step} style={[s.muted, { lineHeight: 19 }]}>
+                • {step}
+              </Text>
+            ))}
+          </View>
+          {g.examples.length > 0 ? (
+            <View style={{ gap: 8, marginTop: 4 }}>
+              {g.examples.map((ex) => (
+                <View
+                  key={ex.id}
+                  style={{
+                    padding: 10,
+                    borderRadius: 10,
+                    backgroundColor: colors.canvas,
+                    borderWidth: 1,
+                    borderColor: colors.line,
+                    gap: 6,
+                  }}
+                >
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                    }}
+                  >
+                    <Text style={{ fontSize: 11, fontWeight: "700", color: colors.text }}>
+                      {ex.label}
+                    </Text>
+                    <Pressable
+                      onPress={() => copyPrompt(ex.id, ex.prompt)}
+                      style={{
+                        paddingHorizontal: 8,
+                        paddingVertical: 3,
+                        borderRadius: 6,
+                        backgroundColor: colors.card,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 10.5,
+                          fontWeight: "700",
+                          color: copiedId === ex.id ? colors.green : colors.blue,
+                        }}
+                      >
+                        {copiedId === ex.id ? "Copied ✓" : "Copy Prompt"}
+                      </Text>
+                    </Pressable>
+                  </View>
+                  <Text style={{ fontSize: 11.5, fontFamily: "monospace", color: colors.muted }}>
+                    {ex.prompt}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </Card>
+      ))}
+    </ScrollView>
+  );
+}
+
+function ComfyLogDock({
+  api,
+  viewportWidth,
+}: {
+  api: ReturnType<typeof useWorkspace>["api"];
+  viewportWidth: number;
+}) {
   const [open, setOpen] = useState(true);
+  const [dockWidth, setDockWidth] = useState(315);
+  const draggingRef = useRef(false);
+  const maxDockWidth = Math.max(315, Math.floor((viewportWidth - 760) / 2) - 22);
+  const effectiveDockWidth = Math.min(dockWidth, maxDockWidth);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onMove = (e: MouseEvent) => {
+      if (!draggingRef.current) return;
+      const next = Math.min(maxDockWidth, Math.max(280, e.clientX - 14));
+      setDockWidth(next);
+    };
+    const onUp = () => {
+      draggingRef.current = false;
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [maxDockWidth]);
   const [logOpen, setLogOpen] = useState(true);
   const [paused, setPaused] = useState(false);
+  const [logLevel, setLogLevel] = useState<"all" | "info" | "warn" | "error">("all");
   const [ctrl, setCtrl] = useState<ComfyControlState>({
     lines: [],
     vramUsedGb: 0,
@@ -213,7 +426,7 @@ function ComfyLogDock({ api }: { api: ReturnType<typeof useWorkspace>["api"] }) 
         left: 14,
         top: 16,
         bottom: logOpen ? 16 : undefined,
-        width: 315,
+        width: effectiveDockWidth,
         zIndex: 25,
         backgroundColor: colors.card,
         borderWidth: 1,
@@ -472,49 +685,197 @@ function ComfyLogDock({ api }: { api: ReturnType<typeof useWorkspace>["api"] }) 
       </View>
 
       {logOpen ? (
-        <ScrollView
-          ref={scrollRef}
-          onContentSizeChange={() => {
-            if (!paused) scrollRef.current?.scrollToEnd({ animated: false });
-          }}
-          style={{ flex: 1, paddingHorizontal: 10, paddingVertical: 8 }}
-        >
-          {ctrl.lines.map((entry) => (
-            <Text
-              key={entry.id}
+        <>
+          <View
+            style={{
+              paddingHorizontal: 10,
+              paddingVertical: 6,
+              borderBottomWidth: 1,
+              borderBottomColor: colors.line,
+              gap: 5,
+            }}
+          >
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+              {(
+                [
+                  ["all", "All"],
+                  ["info", "Info"],
+                  ["warn", "Warn"],
+                  ["error", "Error"],
+                ] as const
+              ).map(([lvl, label]) => (
+                <Pressable
+                  key={lvl}
+                  onPress={() => setLogLevel(lvl)}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 3,
+                    borderRadius: 6,
+                    backgroundColor: logLevel === lvl ? colors.blueDark : colors.canvas,
+                    alignItems: "center",
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 10,
+                      fontWeight: "700",
+                      color: logLevel === lvl ? "#FFFFFF" : colors.text,
+                    }}
+                  >
+                    {label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            <View
               style={{
-                fontSize: 10.5,
-                lineHeight: 15,
-                fontFamily: "monospace",
-                color: /error|traceback|failed/i.test(entry.text)
-                  ? colors.danger
-                  : /%|prompt executed|loaded/i.test(entry.text)
-                    ? colors.green
-                    : colors.muted,
-                marginBottom: 2,
+                flexDirection: "row",
+                justifyContent: "space-between",
+                paddingHorizontal: 2,
               }}
             >
-              {entry.text}
-            </Text>
-          ))}
-        </ScrollView>
+              <Text style={{ fontSize: 9.5, fontWeight: "600", color: "#38BDF8" }}>● ComfyUI</Text>
+              <Text style={{ fontSize: 9.5, fontWeight: "600", color: "#4ADE80" }}>● LLM</Text>
+              <Text style={{ fontSize: 9.5, fontWeight: "600", color: "#C084FC" }}>● Vision</Text>
+              <Text style={{ fontSize: 9.5, fontWeight: "600", color: "#E2E8F0" }}>● Studio</Text>
+            </View>
+          </View>
+          <ScrollView
+            ref={scrollRef}
+            onContentSizeChange={() => {
+              if (!paused) scrollRef.current?.scrollToEnd({ animated: false });
+            }}
+            style={{ flex: 1, paddingHorizontal: 10, paddingVertical: 8 }}
+          >
+            {ctrl.lines
+              .filter((entry) => {
+                const isErr = /\berror\b|traceback|exception|\bfailed\b/i.test(entry.text);
+                const isWarn = !isErr && /\bwarn(?:ing)?\b|\[warn/i.test(entry.text);
+                if (logLevel === "error") return isErr;
+                if (logLevel === "warn") return isWarn;
+                if (logLevel === "info") return !isErr && !isWarn;
+                return true;
+              })
+              .map((entry) => {
+                const t = entry.text;
+                const color = /llama|qwen3-8b|qwen3-14b|slot /i.test(t)
+                  ? "#4ADE80"
+                  : /qwen2\.5-vl|seamlessclone|copy_region/i.test(t)
+                    ? "#C084FC"
+                    : /openmuse|ffmpeg|tts/i.test(t)
+                      ? "#E2E8F0"
+                      : "#38BDF8";
+                return (
+                  <Text
+                    key={entry.id}
+                    style={{
+                      fontSize: 10.5,
+                      lineHeight: 15,
+                      fontFamily: "monospace",
+                      color,
+                      marginBottom: 2,
+                    }}
+                  >
+                    {t}
+                  </Text>
+                );
+              })}
+          </ScrollView>
+        </>
       ) : null}
+      <button
+        type="button"
+        title="Drag to resize panel (double-click to reset)"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          draggingRef.current = true;
+        }}
+        onDoubleClick={() => setDockWidth(315)}
+        style={{
+          position: "absolute",
+          top: 0,
+          right: 0,
+          bottom: 0,
+          width: 10,
+          cursor: "ew-resize",
+          zIndex: 40,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: "transparent",
+          borderWidth: 0,
+          padding: 0,
+          outline: "none",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            top: 12,
+            bottom: 12,
+            width: 1,
+            backgroundColor: "rgba(255,255,255,0.22)",
+          }}
+        />
+        <div
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: 999,
+            backgroundColor: "#E2E8F0",
+            border: "1.5px solid #0F172A",
+            zIndex: 1,
+          }}
+        />
+      </button>
     </View>
   );
 }
 
 interface MediaGalleryItem {
   name: string;
-  kind: "image" | "video";
+  kind: "image" | "video" | "audio";
   sizeKb: number;
   mtimeMs: number;
   url: string;
 }
-function MediaGalleryDock({ api }: { api: ReturnType<typeof useWorkspace>["api"] }) {
+function MediaGalleryDock({
+  api,
+  viewportWidth,
+}: {
+  api: ReturnType<typeof useWorkspace>["api"];
+  viewportWidth: number;
+}) {
   const [open, setOpen] = useState(true);
+  const [galleryWidth, setGalleryWidth] = useState(315);
+  const draggingRef = useRef(false);
+  const maxGalleryWidth = Math.max(315, Math.floor((viewportWidth - 760) / 2) - 22);
+  const effectiveGalleryWidth = Math.min(galleryWidth, maxGalleryWidth);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onMove = (e: MouseEvent) => {
+      if (!draggingRef.current) return;
+      const next = Math.min(maxGalleryWidth, Math.max(280, window.innerWidth - e.clientX - 14));
+      setGalleryWidth(next);
+    };
+    const onUp = () => {
+      draggingRef.current = false;
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [maxGalleryWidth]);
   const [items, setItems] = useState<MediaGalleryItem[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [recSec, setRecSec] = useState(0);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recChunksRef = useRef<Blob[]>([]);
+  const recTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [copiedName, setCopiedName] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const mediaSrc = (u: string) => (u.startsWith("http") ? u : API_URL + u);
@@ -531,6 +892,36 @@ function MediaGalleryDock({ api }: { api: ReturnType<typeof useWorkspace>["api"]
     const iv = setInterval(refresh, 8000);
     return () => clearInterval(iv);
   }, [api]);
+  const toggleMicRecord = async () => {
+    if (recording) {
+      recorderRef.current?.stop();
+      setRecording(false);
+      if (recTimerRef.current) clearInterval(recTimerRef.current);
+      return;
+    }
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mr = new MediaRecorder(stream);
+      recChunksRef.current = [];
+      mr.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) recChunksRef.current.push(ev.data);
+      };
+      mr.onstop = () => {
+        for (const t of stream.getTracks()) t.stop();
+        const blob = new Blob(recChunksRef.current, { type: mr.mimeType || "audio/webm" });
+        const file = new File([blob], `mic-voice-${Date.now()}.webm`, { type: blob.type });
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        void uploadFiles(dt.files);
+      };
+      recorderRef.current = mr;
+      mr.start();
+      setRecSec(0);
+      setRecording(true);
+      recTimerRef.current = setInterval(() => setRecSec((s) => s + 1), 1000);
+    } catch {}
+  };
   const uploadFiles = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
     setUploading(true);
@@ -588,7 +979,7 @@ function MediaGalleryDock({ api }: { api: ReturnType<typeof useWorkspace>["api"]
         right: 14,
         top: 16,
         bottom: 16,
-        width: 315,
+        width: effectiveGalleryWidth,
         zIndex: 25,
         backgroundColor: colors.card,
         borderWidth: 1,
@@ -673,7 +1064,7 @@ function MediaGalleryDock({ api }: { api: ReturnType<typeof useWorkspace>["api"]
             fontWeight: 600,
           }}
         >
-          {uploading ? "Uploading to generated/…" : "Drop images/videos here or click to browse"}
+          {uploading ? "Uploading to generated/…" : "Drop images, videos, or audio here"}
           {copiedName ? (
             <div style={{ fontSize: 10, color: "#10B981", marginTop: 4 }}>
               Saved & copied: {copiedName}
@@ -682,7 +1073,7 @@ function MediaGalleryDock({ api }: { api: ReturnType<typeof useWorkspace>["api"]
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*,video/*"
+            accept="image/*,video/*,audio/*"
             multiple
             style={{ display: "none" }}
             onChange={(e) => {
@@ -691,6 +1082,25 @@ function MediaGalleryDock({ api }: { api: ReturnType<typeof useWorkspace>["api"]
             }}
           />
         </button>
+        <Pressable
+          onPress={() => void toggleMicRecord()}
+          style={{
+            marginTop: 6,
+            paddingVertical: 6,
+            paddingHorizontal: 10,
+            borderRadius: 8,
+            backgroundColor: recording ? colors.danger : colors.canvas,
+            borderWidth: 1,
+            borderColor: recording ? colors.danger : colors.line,
+            alignItems: "center",
+          }}
+        >
+          <Text
+            style={{ fontSize: 11, fontWeight: "700", color: recording ? "#FFFFFF" : colors.text }}
+          >
+            {recording ? `■ Stop & Save (${recSec}s)` : "● Record Voice Sample (Mic)"}
+          </Text>
+        </Pressable>
       </View>
       <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}>
         <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>
@@ -716,7 +1126,11 @@ function MediaGalleryDock({ api }: { api: ReturnType<typeof useWorkspace>["api"]
                 gap: 6,
               }}
             >
-              {item.kind === "video" ? (
+              {item.kind === "audio" ? (
+                <audio src={mediaSrc(item.url)} controls style={{ width: "100%", height: 36 }}>
+                  <track kind="captions" />
+                </audio>
+              ) : item.kind === "video" ? (
                 <video
                   src={mediaSrc(item.url)}
                   controls
@@ -787,11 +1201,78 @@ function MediaGalleryDock({ api }: { api: ReturnType<typeof useWorkspace>["api"]
                 >
                   <Text style={{ fontSize: 10, fontWeight: "600", color: colors.text }}>↗</Text>
                 </Pressable>
+                <Pressable
+                  accessibilityLabel={`Delete ${item.name}`}
+                  onPress={() => {
+                    void fetch(`${API_URL}/api/media-file/${encodeURIComponent(item.name)}`, {
+                      method: "DELETE",
+                      headers: api.token ? { Authorization: `Bearer ${api.token}` } : {},
+                    })
+                      .then(() => {
+                        setItems((prev) => prev.filter((x) => x.name !== item.name));
+                        refresh();
+                      })
+                      .catch(() => {});
+                  }}
+                  style={{
+                    paddingHorizontal: 7,
+                    paddingVertical: 3,
+                    borderRadius: 6,
+                    backgroundColor: colors.card,
+                  }}
+                >
+                  <Text style={{ fontSize: 10, fontWeight: "700", color: colors.danger }}>Del</Text>
+                </Pressable>
               </View>
             </View>
           ))
         )}
       </ScrollView>
+      <button
+        type="button"
+        title="Drag to resize panel (double-click to reset)"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          draggingRef.current = true;
+        }}
+        onDoubleClick={() => setGalleryWidth(315)}
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          bottom: 0,
+          width: 10,
+          cursor: "ew-resize",
+          zIndex: 40,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: "transparent",
+          borderWidth: 0,
+          padding: 0,
+          outline: "none",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            top: 12,
+            bottom: 12,
+            width: 1,
+            backgroundColor: "rgba(255,255,255,0.22)",
+          }}
+        />
+        <div
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: 999,
+            backgroundColor: "#E2E8F0",
+            border: "1.5px solid #0F172A",
+            zIndex: 1,
+          }}
+        />
+      </button>
     </View>
   );
 }
@@ -1050,7 +1531,9 @@ function WorkspaceShell({
                 ? IdeasScreen
                 : section === "goals"
                   ? GoalsScreen
-                  : AppsScreen;
+                  : section === "help"
+                    ? HelpScreen
+                    : AppsScreen;
   const utility = ["mail", "calendar", "browser", "files"].includes(section);
   return (
     <>
@@ -1058,8 +1541,8 @@ function WorkspaceShell({
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.canvas }} edges={["top", "bottom"]}>
         {width >= 1180 && (
           <>
-            <ComfyLogDock api={api} />
-            <MediaGalleryDock api={api} />
+            <ComfyLogDock api={api} viewportWidth={width} />
+            <MediaGalleryDock api={api} viewportWidth={width} />
           </>
         )}
         <View style={{ flex: 1, width: "100%", maxWidth: 760, alignSelf: "center" }}>

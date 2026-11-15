@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { defineTool } from "@copilotkit/runtime/v2";
 import { z } from "zod";
+import { cloneVoiceLocal } from "./comfy-audio.js";
 import { editLocalZImage, renderLocalZImage } from "./comfy-image.js";
 import { renderLocalVideo } from "./comfy-video.js";
 import { runCopyRegionClone, runLocalVisionInspect } from "./vision-tools.js";
@@ -264,6 +265,149 @@ export function mediaTools() {
           return {
             ok: false,
             error: err instanceof Error ? err.message : "Local image animation failed",
+          };
+        }
+      },
+    }),
+
+    defineTool({
+      name: "clone_voice",
+      description:
+        "Zero-shot voice cloning using local Qwen3-TTS-12Hz-1.7B-Base. Provide a short 3-15 second reference voice clip (filename in generated/ or full path) and any new dialogue text to generate a high-quality MP3 in that exact voice.",
+      parameters: z.object({
+        referenceAudioPath: z
+          .string()
+          .min(1)
+          .describe("Reference audio filename in generated/ (e.g. my_voice.wav) or full path"),
+        text: z
+          .string()
+          .min(1)
+          .describe("The new dialogue or narration text to speak in the cloned voice"),
+        referenceText: z
+          .string()
+          .optional()
+          .describe(
+            "Optional exact transcript of what is spoken in the reference audio clip for higher accuracy",
+          ),
+        language: z
+          .enum([
+            "Auto",
+            "English",
+            "Chinese",
+            "Japanese",
+            "Korean",
+            "French",
+            "German",
+            "Spanish",
+            "Portuguese",
+            "Russian",
+            "Italian",
+          ])
+          .default("Auto"),
+        instruct: z
+          .string()
+          .optional()
+          .describe("Optional delivery style or emotion instruction, e.g. calm, excited, dramatic"),
+      }),
+      execute: async ({ referenceAudioPath, text, referenceText, language, instruct }) => {
+        try {
+          const savedPath = await cloneVoiceLocal({
+            referenceAudioPath,
+            text,
+            referenceText,
+            language,
+            instruct,
+          });
+          return { ok: true, model: "qwen3-tts-12hz-1.7b-base", savedPath };
+        } catch (err) {
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : "Local voice cloning failed",
+          };
+        }
+      },
+    }),
+
+    defineTool({
+      name: "add_audio_to_video",
+      description:
+        "Add or mix a generated voiceover/audio track onto a video file using ffmpeg, saving a ready-to-play MP4 into generated/.",
+      parameters: z.object({
+        videoPath: z
+          .string()
+          .min(1)
+          .describe("Video filename in generated/ (e.g. video-123.mp4) or full path"),
+        audioPath: z
+          .string()
+          .min(1)
+          .describe("Audio filename in generated/ (e.g. voice-456.mp3) or full path"),
+        mixOriginalAudio: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Set true to mix the new voiceover over the video existing audio; false replaces the audio track",
+          ),
+      }),
+      execute: async ({ videoPath, audioPath, mixOriginalAudio }) => {
+        await mkdir(GEN_DIR, { recursive: true });
+        const absVideo = videoPath.startsWith("/")
+          ? videoPath
+          : join(GEN_DIR, videoPath.replace("generated/", ""));
+        const absAudio = audioPath.startsWith("/")
+          ? audioPath
+          : join(GEN_DIR, audioPath.replace("generated/", ""));
+        const outPath = join(GEN_DIR, `voiced-${Date.now()}.mp4`);
+        const args = mixOriginalAudio
+          ? [
+              "-y",
+              "-i",
+              absVideo,
+              "-i",
+              absAudio,
+              "-filter_complex",
+              "[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=2[aout]",
+              "-map",
+              "0:v:0",
+              "-map",
+              "[aout]",
+              "-c:v",
+              "copy",
+              "-c:a",
+              "aac",
+              "-b:a",
+              "192k",
+              "-movflags",
+              "+faststart",
+              outPath,
+            ]
+          : [
+              "-y",
+              "-i",
+              absVideo,
+              "-i",
+              absAudio,
+              "-map",
+              "0:v:0",
+              "-map",
+              "1:a:0",
+              "-c:v",
+              "copy",
+              "-c:a",
+              "aac",
+              "-b:a",
+              "192k",
+              "-shortest",
+              "-movflags",
+              "+faststart",
+              outPath,
+            ];
+        try {
+          await execFileAsync("ffmpeg", args);
+          return { ok: true, savedPath: outPath };
+        } catch (err) {
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : "ffmpeg audio mux failed",
           };
         }
       },

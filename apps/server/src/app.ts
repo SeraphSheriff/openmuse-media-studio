@@ -56,9 +56,10 @@ export async function createApp(
   const browser = new BrowserService(db, config, auth, files);
   const computer = new ComputerService(db, config, options.docker);
   const agent = new AgentService(db, config, workspace, files, actions, browser, computer);
-  const intelligence = config.intelligenceApiKey
-    ? new CopilotKitIntelligence({ apiKey: config.intelligenceApiKey })
-    : undefined;
+  const intelligence =
+    config.intelligenceApiKey && config.intelligenceApiKey !== "local-studio-mode"
+      ? new CopilotKitIntelligence({ apiKey: config.intelligenceApiKey })
+      : undefined;
   const runtime = makeRuntime(config, agent, auth, intelligence);
   const app = new Hono<{ Variables: { owner: string } }>();
   const origins = new Set([...config.allowedOrigins, new URL(config.publicUrl).origin]);
@@ -563,18 +564,22 @@ export async function createApp(
       const names = await readdir(genDir);
       const items: Array<{
         name: string;
-        kind: "image" | "video";
+        kind: "image" | "video" | "audio";
         sizeKb: number;
         mtimeMs: number;
         url: string;
       }> = [];
       for (const name of names) {
-        if (!/\.(png|jpe?g|webp|gif|mp4|webm)$/i.test(name)) continue;
+        if (!/\.(png|jpe?g|webp|gif|mp4|webm|mp3|wav|ogg|m4a|flac)$/i.test(name)) continue;
         const st = await stat(resolve(genDir, name));
         if (!st.isFile()) continue;
         items.push({
           name,
-          kind: /\.(mp4|webm)$/i.test(name) ? "video" : "image",
+          kind: /\.(mp4|webm)$/i.test(name)
+            ? "video"
+            : /\.(mp3|wav|ogg|m4a|flac)$/i.test(name)
+              ? "audio"
+              : "image",
           sizeKb: Math.round(st.size / 1024),
           mtimeMs: st.mtimeMs,
           url: `/media-file/${encodeURIComponent(name)}`,
@@ -694,9 +699,42 @@ export async function createApp(
     await mkdir(genDir, { recursive: true });
     const full = resolve(genDir, rawName);
     await writeFile(full, Buffer.from(b64, "base64"));
+    if (/^mic-.*\.webm$/i.test(rawName)) {
+      const { execFile } = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      const { unlink } = await import("node:fs/promises");
+      const wavName = rawName.replace(/\.webm$/i, ".wav");
+      const wavFull = resolve(genDir, wavName);
+      try {
+        await promisify(execFile)("ffmpeg", [
+          "-y",
+          "-i",
+          full,
+          "-ar",
+          "24000",
+          "-ac",
+          "1",
+          wavFull,
+        ]);
+        await unlink(full).catch(() => {});
+        return c.json({ ok: true, name: wavName, savedPath: wavFull });
+      } catch {}
+    }
     return c.json({ ok: true, name: rawName, savedPath: full });
   });
 
+  app.delete("/api/media-file/:name", async (c) => {
+    const { rm } = await import("node:fs/promises");
+    const { basename, resolve } = await import("node:path");
+    const safeName = basename(decodeURIComponent(c.req.param("name")));
+    if (!safeName) return c.json({ ok: false, error: "Invalid filename" }, 400);
+    try {
+      await rm(resolve(process.cwd(), "generated", safeName), { force: true });
+      return c.json({ ok: true, deleted: safeName });
+    } catch (err) {
+      return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+    }
+  });
   app.get("/api/model-settings", async (c) => c.json(await readModelSettings()));
   app.post("/api/model-settings", async (c) => {
     const body = z
