@@ -86,6 +86,7 @@ export async function createApp(
       onError: (c) => c.json({ error: "Request is too large; PDFs must be 10 MB or smaller" }, 413),
     }),
   );
+  const apiRateLimit = rateLimit(Boolean(config.trustProxy));
   app.use("/api/*", async (c, next) => {
     const p = c.req.path;
     if (
@@ -95,7 +96,7 @@ export async function createApp(
       p.startsWith("/media-file/")
     )
       return next();
-    return rateLimit(Boolean(config.trustProxy))(c, next);
+    return apiRateLimit(c, next);
   });
   app.onError((error, c) => {
     if (error instanceof z.ZodError)

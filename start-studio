@@ -2,6 +2,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR" || exit 1
 [ -f .env ] && set -a && . ./.env && set +a
+export CPK_INTELLIGENCE_API_KEY="${CPK_INTELLIGENCE_API_KEY:-local-studio-mode}"
 AGENT_NAME="${OPENMUSE_AGENT_NAME:-OpenMuse Studio}"
 COMFY_PATH="${COMFYUI_DIR:-$HOME/ComfyUI}"
 
