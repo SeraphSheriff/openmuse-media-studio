@@ -1,5 +1,5 @@
 import { getVideoProgress } from "./comfy-video.ts";
-import { readModelSettings, writeModelSettings } from "./model-settings.ts";
+import { ensureLocalModelReady, readModelSettings, writeModelSettings } from "./model-settings.ts";
 import {
   DEFAULT_VIDEO_SETTINGS,
   readVideoSettings,
@@ -61,6 +61,7 @@ export async function createApp(
       ? new CopilotKitIntelligence({ apiKey: config.intelligenceApiKey })
       : undefined;
   const runtime = makeRuntime(config, agent, auth, intelligence);
+  void ensureLocalModelReady().catch(() => {});
   const app = new Hono<{ Variables: { owner: string } }>();
   const origins = new Set([...config.allowedOrigins, new URL(config.publicUrl).origin]);
   app.use("*", async (c, next) => {

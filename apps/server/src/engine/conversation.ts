@@ -21,6 +21,7 @@ import { createJevAdapter, type JevAdapter } from "../jev/adapter.ts";
 import { JevService } from "../jev/service.ts";
 import { presentChoicesTool } from "../jev/tools.ts";
 import { mediaTools } from "../media-tools.ts";
+import { ensureLocalModelReady } from "../model-settings.ts";
 import { searchDescription, searchInputSchema, searchInstructions } from "../search.ts";
 import type { AgentService } from "./service.ts";
 import { tanstackAgent } from "./tanstack-agent.ts";
@@ -384,15 +385,26 @@ export class ConversationAgent extends AbstractAgent {
       }),
     ];
     tools.push(...hostFileTools);
+    void ensureLocalModelReady().catch(() => {});
     let cfgMaxSteps = 16;
+    let activeModel = this.config.model ?? "openai/unconfigured";
+    let activeBaseUrl: string | undefined;
     try {
       const raw = JSON.parse(
         readFileSync(resolvePath(process.cwd(), "model-settings.json"), "utf8"),
       );
       if (typeof raw?.maxSteps === "number") cfgMaxSteps = raw.maxSteps;
+      if (raw?.mode === "q4") {
+        activeModel = raw.q4Model || "openai/Qwen3-8B-abliterated-q4_k_m";
+        activeBaseUrl = raw.q4BaseUrl || ["http://", "127.0.0.1:8080/v1"].join("");
+      } else if (raw?.mode === "q5") {
+        activeModel = raw.q5Model || "openai/qwen3-14b-abliterated-Q4_K_M";
+        activeBaseUrl = raw.q5BaseUrl || ["http://", "127.0.0.1:8080/v1"].join("");
+      }
     } catch {}
     const agent = tanstackAgent({
-      model: this.config.model ?? "openai/unconfigured",
+      model: activeModel,
+      baseUrl: activeBaseUrl,
       // Desktop work takes one step per click or key, each checked on a screenshot.
       maxSteps:
         this.config.computerProvider === "e2b-desktop" ? Math.max(16, cfgMaxSteps) : cfgMaxSteps,

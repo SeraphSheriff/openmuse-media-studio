@@ -22,7 +22,7 @@ import { MODEL_MAX_RETRIES } from "../config.ts";
 
 // Same "provider/model" strings, env vars and base URL formats as the AI SDK resolver in
 // @copilotkit/runtime. Each provider SDK retries transient failures up to MODEL_MAX_RETRIES times.
-function adapter(spec: string) {
+function adapter(spec: string, overrideBaseUrl?: string) {
   const [, provider = "", model = ""] = spec.trim().match(/^([^/:]*)[/:](.*)$/) ?? [];
   if (!provider || !model.trim())
     throw new Error(
@@ -33,9 +33,11 @@ function adapter(spec: string) {
     case "openai":
       // OpenAI-compatible endpoints that do not implement the Responses API
       // tool loop (e.g. DeepSeek) can opt into the Chat Completions wire format.
-      if (process.env.OPENAI_CHAT_COMPLETIONS === "true")
+      if (overrideBaseUrl && !process.env.OPENAI_API_KEY)
+        process.env.OPENAI_API_KEY = "local-llama";
+      if (overrideBaseUrl || process.env.OPENAI_CHAT_COMPLETIONS === "true")
         return openaiChatCompletions(id as OpenAIChatModel, {
-          baseURL: process.env.OPENAI_BASE_URL,
+          baseURL: overrideBaseUrl || process.env.OPENAI_BASE_URL,
           maxRetries: MODEL_MAX_RETRIES,
         });
       return openaiText(id as OpenAIChatModel, {
@@ -113,6 +115,7 @@ const stateTools = [
 /** A BuiltInAgent in TanStack factory mode with the options of the classic AI SDK mode. */
 export function tanstackAgent(options: {
   model: string;
+  baseUrl?: string;
   maxSteps: number;
   tools: ToolDefinition[];
   prompt: string;
@@ -166,7 +169,7 @@ export function tanstackAgent(options: {
       )
         system += `\n## Application State\nThis is state from the application that you can edit by calling AGUISendStateSnapshot or AGUISendStateDelta.\n\`\`\`json\n${JSON.stringify(input.state, null, 2)}\n\`\`\`\n`;
       return chat({
-        adapter: adapter(options.model),
+        adapter: adapter(options.model, options.baseUrl),
         messages,
         systemPrompts: system ? [system] : [],
         tools: [

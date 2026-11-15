@@ -105,6 +105,19 @@ async function ensureLlamaServer(modelPath: string, baseUrl: string): Promise<vo
   );
 }
 
+export async function ensureLocalModelReady(): Promise<void> {
+  const settings = await readModelSettings();
+  if (settings.mode !== "q4" && settings.mode !== "q5") return;
+  const modelPath = settings.mode === "q4" ? settings.q4ModelPath : settings.q5ModelPath;
+  const baseUrl = settings.mode === "q4" ? settings.q4BaseUrl : settings.q5BaseUrl;
+  try {
+    const u = new URL(baseUrl);
+    const res = await fetch(`http://${u.hostname || "127.0.0.1"}:${u.port || "8080"}/health`);
+    if (res.ok) return;
+  } catch {}
+  await ensureLlamaServer(modelPath, baseUrl);
+}
+
 export async function writeModelSettings(patch: Partial<ModelSettings>): Promise<ModelSettings> {
   const current = await readModelSettings();
   const next: ModelSettings = {
