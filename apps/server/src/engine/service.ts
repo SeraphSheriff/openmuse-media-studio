@@ -242,6 +242,25 @@ export class AgentService {
       artifactIds: [],
     };
     await this.ensure(owner);
+    if (input.kind !== "monitor") {
+      const existing = await this.db.list<AgentTask>(owner, "tasks");
+      for (const prev of existing) {
+        if (prev.status === "waiting_input") {
+          await this.db.compareAndSwap<AgentTask>(
+            owner,
+            "tasks",
+            prev.id,
+            { status: "waiting_input" },
+            {
+              status: "cancelled",
+              question: null,
+              updatedAt: date(),
+              result: "Superseded by a newer request.",
+            },
+          );
+        }
+      }
+    }
     await this.db.insertIfAbsent(owner, "tasks", task);
     return (await this.db.get<AgentTask>(owner, "tasks", id)) ?? task;
   }

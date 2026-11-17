@@ -1953,10 +1953,16 @@ function WorkspaceShell({
   const pending =
     (data?.notifications.filter((n) => !n.read).length || 0) +
     workspace.actions.filter((a) => a.status === "awaiting_review").length;
+  const orderedTasks = [...(data?.tasks || [])].sort((a, b) =>
+    (b.updatedAt || b.createdAt || "").localeCompare(a.updatedAt || a.createdAt || ""),
+  );
+  const latestTask = orderedTasks[0];
   const activeTask =
-    data?.tasks.find(
-      (task) => task.status === "waiting_approval" || task.status === "waiting_input",
-    ) || data?.tasks.find((task) => task.status === "running");
+    orderedTasks.find((task) => task.status === "running") ||
+    (latestTask &&
+    (latestTask.status === "waiting_approval" || latestTask.status === "waiting_input")
+      ? latestTask
+      : undefined);
   const memName = (data?.memories || [])
     .map(
       (m) =>
@@ -1975,7 +1981,7 @@ function WorkspaceShell({
       : activeTask.status === "waiting_input"
         ? `Needs your input · ${activeTask.title}`
         : activeTask.plan.find((step) => step.status === "running")?.title || activeTask.title
-    : data?.tasks.some((task) => task.status === "queued")
+    : orderedTasks.some((task) => task.status === "queued")
       ? "Picking up your next task…"
       : "Here when you need me";
   const title = titles[section] || titles.apps;
