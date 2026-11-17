@@ -757,7 +757,7 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
                     </Text>
                     <View style={[s.row, { gap: 8 }]}>
                       <TextInput
-                        value={String(data.settings.customModelDirs ?? "/mnt/a/AI_Models")}
+                        value={String(data.settings.customModelDirs ?? "")}
                         onChangeText={(t) => setVal("customModelDirs", t)}
                         placeholder="/mnt/a/AI_Models or A:\AI_Models"
                         placeholderTextColor="#71717A"
@@ -777,9 +777,7 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
                         disabled={verifying}
                         onPress={async () => {
                           await api.request("/api/video-settings", {
-                            customModelDirs: String(
-                              data.settings.customModelDirs ?? "/mnt/a/AI_Models",
-                            ),
+                            customModelDirs: String(data.settings.customModelDirs ?? ""),
                           });
                           await loadInventory(true);
                         }}
@@ -864,7 +862,22 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
                           ) : (
                             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
                               <Pressable
-                                onPress={() => setVal(grp.settingKey, "")}
+                                onPress={() =>
+                                  grp.settingKey === "loraName"
+                                    ? setData((p) =>
+                                        p
+                                          ? {
+                                              ...p,
+                                              settings: {
+                                                ...p.settings,
+                                                loraName: "",
+                                                extraLoras: "[]",
+                                              },
+                                            }
+                                          : p,
+                                      )
+                                    : setVal(grp.settingKey, "")
+                                }
                                 style={{
                                   paddingHorizontal: 10,
                                   paddingVertical: 5,
@@ -877,27 +890,163 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
                                 </Text>
                               </Pressable>
                               {grp.files.map((file) => {
-                                const selected = curVal === file;
+                                const isLora = grp.settingKey === "loraName";
+                                const extras: Array<{ name: string; strength: number }> = (() => {
+                                  if (!isLora) return [];
+                                  try {
+                                    const arr = JSON.parse(
+                                      String(data.settings.extraLoras ?? "[]"),
+                                    );
+                                    return Array.isArray(arr) ? arr : [];
+                                  } catch {
+                                    return [];
+                                  }
+                                })();
+                                const extraIdx = isLora
+                                  ? extras.findIndex((x) => x.name === file)
+                                  : -1;
+                                const isPrimary = curVal === file;
+                                const selected = isPrimary || extraIdx >= 0;
+                                const strength = isPrimary
+                                  ? Number(data.settings.loraStrength ?? 0.75)
+                                  : extraIdx >= 0
+                                    ? Number(extras[extraIdx].strength ?? 0.75)
+                                    : 0.75;
+                                const setStack = (
+                                  next: Array<{ name: string; strength: number }>,
+                                ) => {
+                                  const [head, ...rest] = next;
+                                  setData((prev) =>
+                                    prev
+                                      ? {
+                                          ...prev,
+                                          settings: {
+                                            ...prev.settings,
+                                            loraName: head ? head.name : "",
+                                            loraStrength: head
+                                              ? head.strength
+                                              : prev.settings.loraStrength,
+                                            extraLoras: JSON.stringify(rest),
+                                          },
+                                        }
+                                      : prev,
+                                  );
+                                };
+                                const toggleFile = () => {
+                                  if (!isLora) return setVal(grp.settingKey, file);
+                                  const stack = [
+                                    ...(curVal
+                                      ? [
+                                          {
+                                            name: curVal,
+                                            strength: Number(data.settings.loraStrength ?? 0.75),
+                                          },
+                                        ]
+                                      : []),
+                                    ...extras,
+                                  ];
+                                  setStack(
+                                    selected
+                                      ? stack.filter((x) => x.name !== file)
+                                      : [...stack, { name: file, strength: 0.75 }],
+                                  );
+                                };
+                                const bump = (delta: number) => {
+                                  const nextStr = Math.max(
+                                    0.05,
+                                    Math.min(2, Math.round((strength + delta) * 20) / 20),
+                                  );
+                                  const stack = [
+                                    ...(curVal
+                                      ? [
+                                          {
+                                            name: curVal,
+                                            strength: Number(data.settings.loraStrength ?? 0.75),
+                                          },
+                                        ]
+                                      : []),
+                                    ...extras,
+                                  ].map((x) => (x.name === file ? { ...x, strength: nextStr } : x));
+                                  setStack(stack);
+                                };
                                 return (
-                                  <Pressable
+                                  <View
                                     key={file}
-                                    onPress={() => setVal(grp.settingKey, file)}
-                                    style={{
-                                      paddingHorizontal: 10,
-                                      paddingVertical: 5,
-                                      borderRadius: 12,
-                                      backgroundColor: selected ? "#1D4ED8" : "#27272A",
-                                      borderWidth: selected ? 1 : 0,
-                                      borderColor: "#60A5FA",
-                                    }}
+                                    style={[
+                                      s.row,
+                                      {
+                                        gap: 4,
+                                        backgroundColor: selected ? "#1D4ED8" : "#27272A",
+                                        borderRadius: 12,
+                                        paddingHorizontal: 10,
+                                        paddingVertical: 5,
+                                        borderWidth: selected ? 1 : 0,
+                                        borderColor: "#60A5FA",
+                                      },
+                                    ]}
                                   >
-                                    <Text
-                                      style={{ fontSize: 11, fontWeight: "600", color: "#FAFAFA" }}
-                                    >
-                                      {file}
-                                      {families[file] ? ` [${families[file]}]` : ""}
-                                    </Text>
-                                  </Pressable>
+                                    <Pressable onPress={toggleFile}>
+                                      <Text
+                                        style={{
+                                          fontSize: 11,
+                                          fontWeight: "600",
+                                          color: "#FAFAFA",
+                                        }}
+                                      >
+                                        {file}
+                                        {families[file] ? ` [${families[file]}]` : ""}
+                                      </Text>
+                                    </Pressable>
+                                    {isLora && selected && (
+                                      <View style={[s.row, { gap: 4, marginLeft: 4 }]}>
+                                        <Pressable
+                                          onPress={() => bump(-0.05)}
+                                          style={{
+                                            paddingHorizontal: 5,
+                                            backgroundColor: "#1E3A8A",
+                                            borderRadius: 6,
+                                          }}
+                                        >
+                                          <Text
+                                            style={{
+                                              fontSize: 11,
+                                              fontWeight: "700",
+                                              color: "#DBEAFE",
+                                            }}
+                                          >
+                                            -
+                                          </Text>
+                                        </Pressable>
+                                        <Text
+                                          style={{
+                                            fontSize: 10.5,
+                                            fontWeight: "700",
+                                            color: "#DBEAFE",
+                                          }}
+                                        >
+                                          {strength.toFixed(2)}
+                                        </Text>
+                                        <Pressable
+                                          onPress={() => bump(0.05)}
+                                          style={{
+                                            paddingHorizontal: 5,
+                                            backgroundColor: "#1E3A8A",
+                                            borderRadius: 6,
+                                          }}
+                                        >
+                                          <Text
+                                            style={{
+                                              fontSize: 11,
+                                              fontWeight: "700",
+                                              color: "#DBEAFE",
+                                            }}
+                                          >
+                                            +
+                                          </Text>
+                                        </Pressable>
+                                      </View>
+                                    )}
+                                  </View>
                                 );
                               })}
                             </View>

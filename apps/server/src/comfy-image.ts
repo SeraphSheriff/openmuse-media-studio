@@ -232,23 +232,74 @@ async function runGraphAndFetchPng(graph: Record<string, unknown>): Promise<Uint
   throw new Error("Timed out waiting for ComfyUI image output");
 }
 
-async function resolveCompatibleImageLora(
+type ActiveLora = { loraName: string; loraStrength: number };
+
+async function resolveCompatibleImageLoras(
   cfg: Record<string, unknown>,
   engine: string,
-): Promise<{ loraName: string; loraStrength: number } | undefined> {
-  const raw = typeof cfg.loraName === "string" ? cfg.loraName.trim() : "";
-  if (!raw) return undefined;
-  const abs = resolve(homedir(), "ComfyUI", "models", "loras", raw);
-  if (!existsSync(abs)) return undefined;
-  const fam = await detectModelFamily(abs, raw);
+): Promise<ActiveLora[]> {
+  const candidates: ActiveLora[] = [];
+  const primary = typeof cfg.loraName === "string" ? cfg.loraName.trim() : "";
+  const pStr = Number(cfg.loraStrength);
+  if (primary) {
+    candidates.push({
+      loraName: primary,
+      loraStrength: Number.isFinite(pStr) && pStr > 0 ? Math.min(2, pStr) : 0.75,
+    });
+  }
+  try {
+    const rawExtra =
+      typeof cfg.extraLoras === "string" ? JSON.parse(cfg.extraLoras) : cfg.extraLoras;
+    if (Array.isArray(rawExtra)) {
+      for (const item of rawExtra) {
+        const name = typeof item?.name === "string" ? item.name.trim() : "";
+        const str = Number(item?.strength);
+        if (name && !candidates.some((c) => c.loraName === name)) {
+          candidates.push({
+            loraName: name,
+            loraStrength: Number.isFinite(str) && str > 0 ? Math.min(2, str) : 0.75,
+          });
+        }
+      }
+    }
+  } catch {}
   const isFlux = engine === "flux_dev" || engine === "flux_kontext";
-  if (isFlux && fam !== "FLUX" && fam !== "Universal") return undefined;
-  if (!isFlux && fam !== "Z-Image" && fam !== "Universal") return undefined;
-  const str = Number(cfg.loraStrength);
-  return {
-    loraName: raw,
-    loraStrength: Number.isFinite(str) && str > 0 ? Math.min(2, str) : 0.75,
-  };
+  const compatible: ActiveLora[] = [];
+  for (const item of candidates) {
+    const abs = resolve(homedir(), "ComfyUI", "models", "loras", item.loraName);
+    if (!existsSync(abs)) continue;
+    const fam = await detectModelFamily(abs, item.loraName);
+    if (isFlux && fam !== "FLUX" && fam !== "Universal") continue;
+    if (!isFlux && fam !== "Z-Image" && fam !== "Universal") continue;
+    compatible.push(item);
+  }
+  return compatible;
+}
+
+function buildLoraChain(loras: ActiveLora[] | undefined): {
+  nodes: Record<string, unknown>;
+  modelRef: [string, number];
+  clipRef: [string, number];
+} {
+  const nodes: Record<string, unknown> = {};
+  let modelRef: [string, number] = ["1", 0];
+  let clipRef: [string, number] = ["2", 0];
+  (loras ?? []).forEach((item, idx) => {
+    const id = String(20 + idx);
+    nodes[id] = {
+      class_type: "LoraLoader",
+      inputs: {
+        model: modelRef,
+        clip: clipRef,
+        lora_name: item.loraName,
+        strength_model: item.loraStrength,
+        strength_clip: item.loraStrength,
+      },
+    };
+    modelRef = [id, 0];
+    clipRef = [id, 1];
+  });
+  return { nodes, modelRef, clipRef };
 }
 
 function buildImageGraph(opts: {
@@ -262,8 +313,9 @@ function buildImageGraph(opts: {
   denoise: number;
   uploadedImage?: string;
   uploadedMask?: string;
-  lora?: { loraName: string; loraStrength: number };
+  loras?: ActiveLora[];
 }): Record<string, unknown> {
+  const chain = buildLoraChain(opts.loras);
   const seed = Math.floor(Math.random() * 1_000_000_000);
   if (opts.engine === "flux_kontext" && opts.uploadedImage) {
     return {
@@ -353,8 +405,8 @@ function buildImageGraph(opts: {
     };
   }
   if (opts.engine === "flux_dev") {
-    const modelRef = opts.lora ? ["20", 0] : ["1", 0];
-    const clipRef = opts.lora ? ["20", 1] : ["2", 0];
+    const modelRef = chain.modelRef;
+    const clipRef = chain.clipRef;
     return {
       "1": {
         class_type: "UNETLoader",
@@ -369,20 +421,7 @@ function buildImageGraph(opts: {
           device: "default",
         },
       },
-      ...(opts.lora
-        ? {
-            "20": {
-              class_type: "LoraLoader",
-              inputs: {
-                model: ["1", 0],
-                clip: ["2", 0],
-                lora_name: opts.lora.loraName,
-                strength_model: opts.lora.loraStrength,
-                strength_clip: opts.lora.loraStrength,
-              },
-            },
-          }
-        : {}),
+      ...chain.nodes,
       "3": { class_type: "VAELoader", inputs: { vae_name: "ae.safetensors" } },
       "4": { class_type: "CLIPTextEncode", inputs: { clip: clipRef, text: opts.prompt } },
       "5": {
@@ -447,31 +486,18 @@ function buildImageGraph(opts: {
       inputs: { clip_name: "qwen_3_4b.safetensors", type: "lumina2", device: "default" },
     },
     "3": { class_type: "VAELoader", inputs: { vae_name: "ae.safetensors" } },
-    ...(opts.lora
-      ? {
-          "20": {
-            class_type: "LoraLoader",
-            inputs: {
-              model: ["1", 0],
-              clip: ["2", 0],
-              lora_name: opts.lora.loraName,
-              strength_model: opts.lora.loraStrength,
-              strength_clip: opts.lora.loraStrength,
-            },
-          },
-        }
-      : {}),
+    ...chain.nodes,
     "4": {
       class_type: "ModelSamplingAuraFlow",
-      inputs: { model: opts.lora ? ["20", 0] : ["1", 0], shift: 3.0 },
+      inputs: { model: chain.modelRef, shift: 3.0 },
     },
     "5": {
       class_type: "CLIPTextEncode",
-      inputs: { clip: opts.lora ? ["20", 1] : ["2", 0], text: opts.prompt },
+      inputs: { clip: chain.clipRef, text: opts.prompt },
     },
     "6": {
       class_type: "CLIPTextEncode",
-      inputs: { clip: opts.lora ? ["20", 1] : ["2", 0], text: opts.negPrompt },
+      inputs: { clip: chain.clipRef, text: opts.negPrompt },
     },
     ...(opts.uploadedImage
       ? {
@@ -536,7 +562,7 @@ export async function renderLocalZImage(
     String(cfg.imageEngine || "z_image_turbo") === "flux_kontext"
       ? "flux_dev"
       : String(cfg.imageEngine || "z_image_turbo");
-  const lora = await resolveCompatibleImageLora(cfg, engine);
+  const loras = await resolveCompatibleImageLoras(cfg, engine);
   return runGraphAndFetchPng(
     buildImageGraph({
       engine,
@@ -552,7 +578,7 @@ export async function renderLocalZImage(
       steps: Number(cfg.imageSteps) || 8,
       cfgScale: Number(cfg.imageCfg) || 1.0,
       denoise: 1.0,
-      lora,
+      loras,
     }),
   );
 }
@@ -571,7 +597,7 @@ export async function editLocalZImage(
     wantExact || cfg.imageEngine === "flux_kontext" || cfg.editEngine === "flux_kontext"
       ? "flux_kontext"
       : String(cfg.imageEngine || "z_image_turbo");
-  const lora = await resolveCompatibleImageLora(cfg, editEngine);
+  const loras = await resolveCompatibleImageLoras(cfg, editEngine);
   return runGraphAndFetchPng(
     buildImageGraph({
       engine: editEngine,
@@ -589,7 +615,7 @@ export async function editLocalZImage(
             : Number(cfg.imageDenoise) || 0.3,
       uploadedImage: uploaded,
       uploadedMask,
-      lora,
+      loras,
     }),
   );
 }

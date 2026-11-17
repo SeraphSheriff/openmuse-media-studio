@@ -575,6 +575,7 @@ export const DEFAULT_VIDEO_SETTINGS: VideoSettings = {
   upscaleCfg: 1.0,
   loraName: "ltx_2.3_22b_distilled_1.1_lora_dynamic_fro09_avg_rank_111_bf16.safetensors",
   loraStrength: 0.5,
+  extraLoras: "[]",
   baseSigmas: "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0",
   upscaleSigmas: "0.85, 0.7250, 0.4219, 0.0",
   fastMode: true,
