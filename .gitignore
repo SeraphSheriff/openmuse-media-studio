@@ -32,3 +32,4 @@ data/
 model-settings.json
 model-storage.json
 video-settings.json
+*.bkp
