@@ -863,14 +863,14 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
                             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
                               <Pressable
                                 onPress={() =>
-                                  grp.settingKey === "loraName"
+                                  grp.settingKey === "activeImageLora"
                                     ? setData((p) =>
                                         p
                                           ? {
                                               ...p,
                                               settings: {
                                                 ...p.settings,
-                                                loraName: "",
+                                                activeImageLora: "",
                                                 extraLoras: "[]",
                                               },
                                             }
@@ -890,7 +890,7 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
                                 </Text>
                               </Pressable>
                               {grp.files.map((file) => {
-                                const isLora = grp.settingKey === "loraName";
+                                const isLora = grp.settingKey === "activeImageLora";
                                 const extras: Array<{ name: string; strength: number }> = (() => {
                                   if (!isLora) return [];
                                   try {
@@ -922,7 +922,7 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
                                           ...prev,
                                           settings: {
                                             ...prev.settings,
-                                            loraName: head ? head.name : "",
+                                            activeImageLora: head ? head.name : "",
                                             loraStrength: head
                                               ? head.strength
                                               : prev.settings.loraStrength,

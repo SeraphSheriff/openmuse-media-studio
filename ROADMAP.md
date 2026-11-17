@@ -37,5 +37,6 @@ The release is a personal-agent alpha: delegate a job, inspect its plan, supply 
 - [ ] OCR/scanned PDFs, more form types, and calendar recurrence editing.
 - [ ] Adaptive long-term plans, broader source-backed ideas, and a managed registry for generated tools.
 - [ ] Multi-user authentication, deployment hardening, retention/export controls, and operational recovery.
+- [ ] Optional negative LoRA weights (`-1.00` to `2.00`) in Studio Settings for concept/style subtraction.
 
 Each item needs its own authentication, capability boundaries, failure behavior, and end-to-end evidence before it becomes a supported feature. No dates or third-party API access are promised.
