@@ -3,6 +3,7 @@ import { ensureLocalModelReady, readModelSettings, writeModelSettings } from "./
 import { cleanupPromptHistory, deletePromptHistory, readPromptHistory } from "./prompt-history.ts";
 import {
   DEFAULT_VIDEO_SETTINGS,
+  detectSettingConflicts,
   readVideoSettings,
   STUDIO_SCHEMA,
   scanComfyInventory,
@@ -790,9 +791,17 @@ export async function createApp(
   app.post("/api/video-settings/reset", async (c) =>
     c.json({ settings: await writeVideoSettings(DEFAULT_VIDEO_SETTINGS), schema: STUDIO_SCHEMA }),
   );
-  app.get("/api/comfy-inventory", async (c) =>
-    c.json({ inventory: await scanComfyInventory(), settings: await readVideoSettings() }),
-  );
+  app.get("/api/comfy-inventory", async (c) => {
+    const inventory = await scanComfyInventory();
+    const settings = await readVideoSettings();
+    const validation = await detectSettingConflicts(settings, inventory);
+    return c.json({ inventory, settings, ...validation });
+  });
+  app.post("/api/comfy-inventory/validate", async (c) => {
+    const draft = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+    const cur = await readVideoSettings();
+    return c.json(await detectSettingConflicts({ ...cur, ...draft }));
+  });
   app.post("/api/comfy-inventory/verify", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as { autoSync?: boolean };
     return c.json(await verifyComfyInventory(Boolean(body?.autoSync)));

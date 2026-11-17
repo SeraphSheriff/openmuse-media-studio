@@ -14,7 +14,7 @@ Local-first AI media production workstation combining a symmetric 3-column studi
 
 | Tool Name | Backend Engine | Core Capability |
 | :--- | :--- | :--- |
-| `generate_image` | `FLUX.1-dev` / `Z-Image-Turbo` | Text-to-image generation with quality presets and automatic prompt logging. |
+| `generate_image` | `FLUX.1-dev` / `Z-Image-Turbo` | 100% local text-to-image generation (no silent cloud fallbacks or watermarks) with automatic prompt logging. |
 | `edit_image` | `FLUX.1-Kontext-dev` + `SetLatentNoiseMask` | Pixel-locked attribute/style editing with `ReferenceLatent` and `ImageCompositeMasked`. |
 | `remove_object` | `Qwen2.5-VL` + `FLUX.1-dev` (`denoise: 1.0`) | Clean-plate object/watermark removal without `ReferenceLatent` ghosting. |
 | `generate_video` / `animate_image` | `LTX-2.3` (22B Distilled) | T2V and I2V MP4 generation with audio up to 180s and `"exact"` identity lock. |
@@ -28,7 +28,8 @@ Local-first AI media production workstation combining a symmetric 3-column studi
 | :--- | :--- | :--- |
 | **`Draft (8-Step)`** | `960x544`, `imageSteps: 8`, `loraStrength: 0.5`, `i2vImgCompression: 8` | Fast iteration, layout checks, and quick motion previews. |
 | **`Cinema Quality`** | `1280x720`, `imageSteps: 28`, `loraStrength: 0.25`, `i2vImgCompression: 0` | High-detail final renders with maximum subject and face identity lock. |
-| **`Verify & Sync Filesystem`** | Live `realpath`-safe recursive disk scan + `video-defaults.json` sync | Detects newly added LoRAs/models and repairs missing disk references. |
+| **`Verify & Sync Filesystem`** | Live `realpath`-safe recursive disk scan + `.safetensors` header inspector | Tags components (`[FLUX]`, `[Z-Image]`, `[LTX-2.3]`, `[SDXL]`) and flags conflicts with 1-click Auto-Fix. |
+| **`LLM & Presets` + Dirty Guard** | Dedicated LLM/preset tab, live header pill sync, deep-diff unsaved guard | Switches `Qwen3 8B`/`14B`/`Gemini` cleanly and warns before discarding unsaved edits. |
 
 ## ComfyUI Model Directories & Custom Storage
 

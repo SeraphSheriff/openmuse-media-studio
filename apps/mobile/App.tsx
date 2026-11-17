@@ -2291,7 +2291,27 @@ function WorkspaceShell({
             onOpenVideoStudio={() => setVideoSettingsOpen(true)}
           />
         )}
-        {videoSettingsOpen && <VideoSettingsModal onClose={() => setVideoSettingsOpen(false)} />}
+        {videoSettingsOpen && (
+          <VideoSettingsModal
+            onClose={() => {
+              setVideoSettingsOpen(false);
+              void api
+                .request<{ settings?: { imageEngine?: string } }>("/api/video-settings")
+                .then((r) => {
+                  const eng = r?.settings?.imageEngine;
+                  if (eng === "flux_dev" || eng === "z_image_turbo") setImageEngine(eng);
+                })
+                .catch(() => {});
+              void api
+                .request<{ mode?: "cloud" | "q4" | "q5" }>("/api/model-settings")
+                .then((r) => {
+                  if (r?.mode === "cloud" || r?.mode === "q4" || r?.mode === "q5")
+                    setModelMode(r.mode);
+                })
+                .catch(() => {});
+            }}
+          />
+        )}
         {avatarSheetOpen && (
           <Sheet
             title="Agent Avatar"

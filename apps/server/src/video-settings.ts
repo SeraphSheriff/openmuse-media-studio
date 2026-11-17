@@ -851,3 +851,165 @@ export async function syncCustomModelSymlinks(rawDirs: string): Promise<string[]
   }
   return linked;
 }
+
+export type ModelFamily =
+  | "FLUX"
+  | "Z-Image"
+  | "LTX-2.3"
+  | "Gemma-3"
+  | "SDXL"
+  | "SD1.5"
+  | "Wan / Hunyuan"
+  | "Universal";
+
+export async function detectModelFamily(absPath: string, relName: string): Promise<ModelFamily> {
+  let headerKeys = "";
+  if (/\.safetensors$/i.test(absPath)) {
+    try {
+      const { open } = await import("node:fs/promises");
+      const fh = await open(absPath, "r");
+      try {
+        const lenBuf = Buffer.alloc(8);
+        await fh.read(lenBuf, 0, 8, 0);
+        const headerLen = Number(lenBuf.readBigUInt64LE(0));
+        if (headerLen > 0 && headerLen < 16_000_000) {
+          const sliceLen = Math.min(headerLen, 65536);
+          const hdrBuf = Buffer.alloc(sliceLen);
+          await fh.read(hdrBuf, 0, sliceLen, 8);
+          headerKeys = hdrBuf.toString("utf8").toLowerCase();
+        }
+      } finally {
+        await fh.close();
+      }
+    } catch {}
+  }
+  const sig = `${relName.toLowerCase()} ${headerKeys}`;
+  if (/\bltx|ltxv|ltx_2\.3/.test(sig)) return "LTX-2.3";
+  if (/\bgemma/.test(sig)) return "Gemma-3";
+  if (/qwen_3_4b|z_image|z-image|nextdit|lumina/.test(sig)) return "Z-Image";
+  if (/double_blocks|single_blocks|\bflux\b|kontext|ae\.safetensors|t5xxl|clip_l/.test(sig))
+    return "FLUX";
+  if (/wan2|hunyuan/.test(sig)) return "Wan / Hunyuan";
+  if (/conditioner\.embedders|sdxl|pony|illustrious/.test(sig)) return "SDXL";
+  if (/cond_stage_model\.transformer|sd15|v1-5/.test(sig)) return "SD1.5";
+  return "Universal";
+}
+
+export interface SettingConflict {
+  id: string;
+  severity: "error" | "warning";
+  title: string;
+  detail: string;
+  fixLabel?: string;
+  fixPatch?: Record<string, string | number | boolean>;
+}
+
+export async function detectSettingConflicts(
+  cfg: Record<string, unknown>,
+  inventory?: ComponentCategoryScan[],
+): Promise<{
+  families: Record<string, ModelFamily>;
+  conflicts: SettingConflict[];
+}> {
+  const inv = inventory ?? (await scanComfyInventory());
+  const families: Record<string, ModelFamily> = {};
+  for (const grp of inv) {
+    for (const f of grp.files) {
+      if (families[f]) continue;
+      for (const sub of grp.dirs) {
+        const p = resolve(COMFY_MODELS_ROOT, sub, f);
+        const { existsSync } = await import("node:fs");
+        if (existsSync(p)) {
+          families[f] = await detectModelFamily(p, f);
+          break;
+        }
+      }
+    }
+  }
+
+  const conflicts: SettingConflict[] = [];
+  const imgEngine = String(cfg.imageEngine || "z_image_turbo");
+  const lora = String(cfg.loraName || "");
+  const vae = String(cfg.activeVae || "");
+  const enc = String(cfg.activeTextEncoder || "");
+  const cn = String(cfg.activeControlNet || "");
+
+  if (lora) {
+    const lf = families[lora] || (await detectModelFamily("", lora));
+    if (lf === "SDXL" || lf === "SD1.5") {
+      conflicts.push({
+        id: "lora_sd_arch",
+        severity: "error",
+        title: `Incompatible LoRA Architecture (${lf})`,
+        detail: `"${lora}" is built for ${lf}, which cannot load into FLUX.1-dev, Z-Image-Turbo, or LTX-2.3.`,
+        fixLabel: "Clear Incompatible LoRA",
+        fixPatch: { loraName: "" },
+      });
+    } else if (lf === "FLUX" && imgEngine === "z_image_turbo") {
+      conflicts.push({
+        id: "lora_flux_on_zimage",
+        severity: "warning",
+        title: "FLUX LoRA Selected While Image Engine Is Z-Image-Turbo",
+        detail: `"${lora}" targets FLUX.1-dev. Switch Image Engine to FLUX.1-dev so image renders apply this LoRA.`,
+        fixLabel: "Switch Image Engine to FLUX.1-dev",
+        fixPatch: { imageEngine: "flux_dev", imageSteps: 28, imageCfg: 3.5 },
+      });
+    } else if (lf === "Z-Image" && imgEngine === "flux_dev") {
+      conflicts.push({
+        id: "lora_zimage_on_flux",
+        severity: "warning",
+        title: "Z-Image LoRA Selected While Image Engine Is FLUX.1-dev",
+        detail: `"${lora}" targets Z-Image-Turbo. Switch Image Engine to Z-Image-Turbo to use it.`,
+        fixLabel: "Switch Image Engine to Z-Image-Turbo",
+        fixPatch: { imageEngine: "z_image_turbo", imageSteps: 8, imageCfg: 1.0 },
+      });
+    }
+  }
+
+  if (vae) {
+    const vf = families[vae] || (await detectModelFamily("", vae));
+    if (vf === "LTX-2.3" && (imgEngine === "flux_dev" || imgEngine === "z_image_turbo")) {
+      conflicts.push({
+        id: "vae_ltx_on_image",
+        severity: "warning",
+        title: "LTX-2.3 Video/Audio VAE Selected in General VAE Slot",
+        detail: `"${vae}" is a video/audio VAE for LTX-2.3. Image pipelines require ae.safetensors.`,
+        fixLabel: "Set VAE to ae.safetensors",
+        fixPatch: { activeVae: "ae.safetensors" },
+      });
+    }
+  }
+
+  if (enc) {
+    const ef = families[enc] || (await detectModelFamily("", enc));
+    if ((ef === "LTX-2.3" || ef === "Gemma-3") && imgEngine === "flux_dev") {
+      conflicts.push({
+        id: "enc_ltx_on_flux",
+        severity: "warning",
+        title: `${ef} Encoder Selected While Image Engine Is FLUX.1-dev`,
+        detail: `"${enc}" belongs to LTX-2.3 video generation. FLUX.1-dev uses clip_l + t5xxl.`,
+        fixLabel: "Reset Encoder to Default",
+        fixPatch: { activeTextEncoder: "" },
+      });
+    }
+  }
+
+  if (cn) {
+    const cf = families[cn] || (await detectModelFamily("", cn));
+    if (
+      (cf === "SDXL" || cf === "SD1.5") &&
+      (imgEngine === "flux_dev" || imgEngine === "z_image_turbo")
+    ) {
+      conflicts.push({
+        id: "cn_arch_mismatch",
+        severity: "error",
+        title: `Incompatible ControlNet Architecture (${cf})`,
+        detail: `"${cn}" is for ${cf} and will fail on ${imgEngine}.`,
+        fixLabel: "Clear Incompatible ControlNet",
+        fixPatch: { activeControlNet: "" },
+      });
+    }
+  }
+
+  return { families, conflicts };
+}

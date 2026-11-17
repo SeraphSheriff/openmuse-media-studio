@@ -32,7 +32,7 @@ type FieldDef =
       options: Array<{ value: string; label: string }>;
     };
 
-type StudioTab = "video" | "image" | "audio" | "vision" | "models";
+type StudioTab = "video" | "image" | "audio" | "vision" | "models" | "presets";
 type InventoryGroup = {
   id: string;
   label: string;
@@ -41,9 +41,19 @@ type InventoryGroup = {
   installNote: string;
   files: string[];
 };
+type SettingConflict = {
+  id: string;
+  severity: "error" | "warning";
+  title: string;
+  detail: string;
+  fixLabel?: string;
+  fixPatch?: Record<string, string | number | boolean>;
+};
 type InventoryPayload = {
   groups: InventoryGroup[];
   mismatches?: string[];
+  families?: Record<string, string>;
+  conflicts?: SettingConflict[];
   synced?: boolean;
 };
 type StudioPayload = {
@@ -58,6 +68,28 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
   const [activeTab, setActiveTab] = useState<StudioTab>("video");
   const [inventory, setInventory] = useState<InventoryPayload | null>(null);
   const [verifying, setVerifying] = useState(false);
+  const [families, setFamilies] = useState<Record<string, string>>({});
+  const [conflicts, setConflicts] = useState<SettingConflict[]>([]);
+  const validateDraft = async (nextSettings: Record<string, string | number | boolean>) => {
+    try {
+      const res = await api.request<{
+        families?: Record<string, string>;
+        conflicts?: SettingConflict[];
+      }>("/api/comfy-inventory/validate", nextSettings);
+      if (res?.families) setFamilies(res.families);
+      if (Array.isArray(res?.conflicts)) setConflicts(res.conflicts);
+    } catch {}
+  };
+  const [llmMode, setLlmMode] = useState<"q4" | "q5" | "cloud">("q4");
+  const switchLlm = async (mode: "q4" | "q5" | "cloud", label: string) => {
+    setLlmMode(mode);
+    try {
+      await api.request("/api/model-settings", { mode });
+      notify(`Active LLM switched to ${label}`);
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Could not switch LLM");
+    }
+  };
   const loadInventory = async (verify = false) => {
     setVerifying(true);
     try {
@@ -75,7 +107,11 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
         (res as unknown as { issues?: string[] })?.issues ??
         (res as InventoryPayload)?.mismatches ??
         [];
-      if (groups) setInventory({ groups, mismatches: issues });
+      const fams = (res as unknown as { families?: Record<string, string> })?.families;
+      const confs = (res as unknown as { conflicts?: SettingConflict[] })?.conflicts;
+      if (fams) setFamilies(fams);
+      if (Array.isArray(confs)) setConflicts(confs);
+      if (groups) setInventory({ groups, mismatches: issues, families: fams, conflicts: confs });
       if (verify) {
         const fresh = await api.request<StudioPayload>("/api/video-settings");
         if (fresh) setData(fresh);
@@ -94,9 +130,39 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
   };
   useEffect(() => {
     void loadInventory(false);
+    void api
+      .request<{ mode?: "q4" | "q5" | "cloud" }>("/api/model-settings")
+      .then((r) => {
+        if (r?.mode === "q4" || r?.mode === "q5" || r?.mode === "cloud") setLlmMode(r.mode);
+      })
+      .catch(() => {});
   }, []);
   const [numDrafts, setNumDrafts] = useState<Record<string, string>>({});
+  const [initialSettings, setInitialSettings] = useState<Record<
+    string,
+    string | number | boolean
+  > | null>(null);
+  const stableSnap = (obj: Record<string, string | number | boolean> | null | undefined) =>
+    obj
+      ? JSON.stringify(
+          Object.keys(obj)
+            .sort()
+            .map((k) => [k, obj[k]]),
+        )
+      : "";
+  const dirty = Boolean(
+    data && initialSettings && stableSnap(data.settings) !== stableSnap(initialSettings),
+  );
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const handleClose = () => {
+    if (dirty) {
+      setConfirmDiscard(true);
+      return;
+    }
+    onClose();
+  };
   const applyPreset = (preset: "draft" | "cinema") => {
+    setConfirmDiscard(false);
     setData((prev) =>
       prev
         ? {
@@ -136,18 +202,31 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
   };
 
   useEffect(() => {
-    void api.request<StudioPayload>("/api/video-settings").then(setData);
+    void api.request<StudioPayload>("/api/video-settings").then((res) => {
+      setData(res);
+      if (res?.settings) setInitialSettings(res.settings);
+    });
   }, [api]);
 
-  const setVal = (key: string, val: string | number | boolean) =>
-    setData((prev) => (prev ? { ...prev, settings: { ...prev.settings, [key]: val } } : prev));
+  const setVal = (key: string, val: string | number | boolean) => {
+    setConfirmDiscard(false);
+    setData((prev) => {
+      if (!prev) return prev;
+      const nextSettings = { ...prev.settings, [key]: val };
+      void validateDraft(nextSettings);
+      return { ...prev, settings: nextSettings };
+    });
+  };
 
   const save = async () => {
     if (!data) return;
     setSaving(true);
     try {
-      setData(await api.request<StudioPayload>("/api/video-settings", data.settings));
-      notify("Video Studio settings saved.");
+      const saved = await api.request<StudioPayload>("/api/video-settings", data.settings);
+      setData(saved);
+      if (saved?.settings) setInitialSettings(saved.settings);
+      setConfirmDiscard(false);
+      notify("Studio settings saved.");
       onClose();
     } finally {
       setSaving(false);
@@ -157,8 +236,11 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
   const reset = async () => {
     setSaving(true);
     try {
-      setData(await api.request<StudioPayload>("/api/video-settings/reset", {}));
+      const resetRes = await api.request<StudioPayload>("/api/video-settings/reset", {});
+      setData(resetRes);
+      if (resetRes?.settings) setInitialSettings(resetRes.settings);
       setNumDrafts({});
+      setConfirmDiscard(false);
       notify("Reset to recommended RTX 3090 defaults.");
     } finally {
       setSaving(false);
@@ -285,7 +367,7 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible transparent animationType="fade" onRequestClose={handleClose}>
       <View
         style={{
           flex: 1,
@@ -315,7 +397,7 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
               </Text>
             </View>
             <Pressable
-              onPress={onClose}
+              onPress={handleClose}
               style={{ padding: 6, backgroundColor: "#27272A", borderRadius: 16 }}
             >
               <X size={18} color="#E4E4E7" />
@@ -335,6 +417,7 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
                   ["audio", "Voice & Audio"],
                   ["vision", "Vision & Clone"],
                   ["models", "Models & Components"],
+                  ["presets", "LLM & Presets"],
                 ] as Array<[StudioTab, string]>
               ).map(([id, label]) => (
                 <Pressable
@@ -353,39 +436,68 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
                 </Pressable>
               ))}
             </View>
-            <View style={[s.row, { gap: 6 }]}>
-              <Pressable
-                onPress={() => applyPreset("draft")}
-                style={{
-                  paddingHorizontal: 9,
-                  paddingVertical: 5,
-                  borderRadius: 12,
-                  backgroundColor: "#27272A",
-                  borderWidth: 1,
-                  borderColor: "#3F3F46",
-                }}
-              >
-                <Text style={{ fontSize: 11, fontWeight: "600", color: "#E4E4E7" }}>
-                  ⚡ Draft (8-Step)
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={() => applyPreset("cinema")}
-                style={{
-                  paddingHorizontal: 9,
-                  paddingVertical: 5,
-                  borderRadius: 12,
-                  backgroundColor: "#14532D",
-                  borderWidth: 1,
-                  borderColor: "#22C55E",
-                }}
-              >
-                <Text style={{ fontSize: 11, fontWeight: "700", color: "#DCFCE7" }}>
-                  🎬 Cinema Quality
-                </Text>
-              </Pressable>
-            </View>
           </View>
+          {conflicts.length > 0 && (
+            <View style={{ gap: 6, marginBottom: 10 }}>
+              {conflicts.map((c) => {
+                const isErr = c.severity === "error";
+                return (
+                  <View
+                    key={c.id}
+                    style={{
+                      padding: 10,
+                      borderRadius: 12,
+                      backgroundColor: isErr ? "rgba(239,68,68,0.16)" : "rgba(245,158,11,0.15)",
+                      borderWidth: 1,
+                      borderColor: isErr ? "#EF4444" : "#F59E0B",
+                      gap: 5,
+                    }}
+                  >
+                    <View
+                      style={[s.row, { justifyContent: "space-between", flexWrap: "wrap", gap: 6 }]}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          fontWeight: "700",
+                          color: isErr ? "#FCA5A5" : "#FCD34D",
+                        }}
+                      >
+                        {isErr ? "⛔ " : "⚠️ "}
+                        {c.title}
+                      </Text>
+                      {c.fixLabel && c.fixPatch && (
+                        <Pressable
+                          onPress={() => {
+                            setData((prev) => {
+                              if (!prev) return prev;
+                              const nextSettings = { ...prev.settings, ...c.fixPatch };
+                              void validateDraft(nextSettings);
+                              return { ...prev, settings: nextSettings };
+                            });
+                            notify(`Applied fix: ${c.fixLabel}`);
+                          }}
+                          style={{
+                            paddingHorizontal: 9,
+                            paddingVertical: 4,
+                            borderRadius: 8,
+                            backgroundColor: isErr ? "#DC2626" : "#D97706",
+                          }}
+                        >
+                          <Text style={{ fontSize: 10.5, fontWeight: "700", color: "#FFF" }}>
+                            {c.fixLabel}
+                          </Text>
+                        </Pressable>
+                      )}
+                    </View>
+                    <Text style={{ fontSize: 11, lineHeight: 15, color: "#E4E4E7" }}>
+                      {c.detail}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+          )}
           {!data ? (
             <ActivityIndicator color="#60A5FA" style={{ marginVertical: 40 }} />
           ) : (
@@ -393,6 +505,153 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ gap: 14, paddingBottom: 14 }}
             >
+              {activeTab === "presets" && (
+                <View style={{ gap: 14, paddingBottom: 12 }}>
+                  <View
+                    style={{
+                      padding: 14,
+                      borderRadius: 16,
+                      backgroundColor: "#242428",
+                      gap: 10,
+                    }}
+                  >
+                    <Text style={{ fontSize: 14, fontWeight: "700", color: "#FAFAFA" }}>
+                      1. Chat & Reasoning LLM (llama.cpp / Cloud)
+                    </Text>
+                    <Text style={{ fontSize: 11.5, lineHeight: 17, color: "#A1A1AA" }}>
+                      Selects the brain that interprets your chat requests, writes prompts, and
+                      orchestrates image, video, audio, and vision tools. Syncs live with the top
+                      header pill.
+                    </Text>
+                    <View style={{ gap: 8 }}>
+                      {(
+                        [
+                          {
+                            id: "q4",
+                            label: "Qwen3 8B (Local Q4_K_M)",
+                            desc: "Fast local reasoning via llama.cpp (~5.5 GB VRAM). Leaves maximum VRAM headroom for ComfyUI image and video renders with zero cloud filtering.",
+                          },
+                          {
+                            id: "q5",
+                            label: "Qwen3 14B (Local Q5_K_M)",
+                            desc: "Higher-precision local reasoning via llama.cpp (~10.5 GB VRAM). Best local choice for complex multi-step tool chains and strict prompt adherence.",
+                          },
+                          {
+                            id: "cloud",
+                            label: "Gemini (Cloud API)",
+                            desc: "Cloud-hosted reasoning (0 GB local VRAM) with a 1M token context window. Note: subject to external cloud content policies.",
+                          },
+                        ] as const
+                      ).map((opt) => {
+                        const active = llmMode === opt.id;
+                        return (
+                          <Pressable
+                            key={opt.id}
+                            onPress={() =>
+                              void switchLlm(opt.id, opt.label.split(" (").at(0) || opt.label)
+                            }
+                            style={{
+                              padding: 12,
+                              borderRadius: 12,
+                              backgroundColor: active ? "rgba(29,78,216,0.22)" : "#18181B",
+                              borderWidth: 1,
+                              borderColor: active ? "#60A5FA" : "#2E2E32",
+                              gap: 4,
+                            }}
+                          >
+                            <View style={[s.row, { justifyContent: "space-between" }]}>
+                              <Text style={{ fontSize: 12.5, fontWeight: "700", color: "#FAFAFA" }}>
+                                {opt.label}
+                              </Text>
+                              <Text
+                                style={{
+                                  fontSize: 10.5,
+                                  fontWeight: "700",
+                                  color: active ? "#60A5FA" : "#71717A",
+                                }}
+                              >
+                                {active ? "ACTIVE" : "Select"}
+                              </Text>
+                            </View>
+                            <Text style={{ fontSize: 11, lineHeight: 16, color: "#A1A1AA" }}>
+                              {opt.desc}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  </View>
+
+                  <View
+                    style={{
+                      padding: 14,
+                      borderRadius: 16,
+                      backgroundColor: "#242428",
+                      gap: 10,
+                    }}
+                  >
+                    <Text style={{ fontSize: 14, fontWeight: "700", color: "#FAFAFA" }}>
+                      2. One-Click Pipeline Quality & Speed Presets
+                    </Text>
+                    <Text style={{ fontSize: 11.5, lineHeight: 17, color: "#A1A1AA" }}>
+                      Applies coordinated step counts, resolutions, LoRA weights, and identity
+                      conditioning across both Image and Video (LTX-2.3) pipelines. Click Save
+                      Studio Settings below after applying.
+                    </Text>
+                    <View style={{ gap: 8 }}>
+                      <Pressable
+                        onPress={() => {
+                          applyPreset("draft");
+                          notify(
+                            "Applied Draft (8-Step) preset — click Save Studio Settings to persist",
+                          );
+                        }}
+                        style={{
+                          padding: 12,
+                          borderRadius: 12,
+                          backgroundColor: "#18181B",
+                          borderWidth: 1,
+                          borderColor: "#3F3F46",
+                          gap: 4,
+                        }}
+                      >
+                        <Text style={{ fontSize: 12.5, fontWeight: "700", color: "#FAFAFA" }}>
+                          ⚡ Draft (8-Step) — Fast Iteration
+                        </Text>
+                        <Text style={{ fontSize: 11, lineHeight: 16, color: "#A1A1AA" }}>
+                          Sets Video to 960×544 (fast 8-step sigmas, LoRA 0.50, I2V compression 8)
+                          and Image to 8 steps. Ideal for rapid composition tests and motion
+                          previews.
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => {
+                          applyPreset("cinema");
+                          notify(
+                            "Applied Cinema Quality preset — click Save Studio Settings to persist",
+                          );
+                        }}
+                        style={{
+                          padding: 12,
+                          borderRadius: 12,
+                          backgroundColor: "rgba(20,83,45,0.35)",
+                          borderWidth: 1,
+                          borderColor: "#22C55E",
+                          gap: 4,
+                        }}
+                      >
+                        <Text style={{ fontSize: 12.5, fontWeight: "700", color: "#DCFCE7" }}>
+                          🎬 Cinema Quality — Maximum Detail & Identity Lock
+                        </Text>
+                        <Text style={{ fontSize: 11, lineHeight: 16, color: "#BBF7D0" }}>
+                          Sets Video to 1280×720 HD (18-step sigmas, LoRA 0.25, I2V compression 0
+                          for strict full-body and face lock) and Image to 28 steps.
+                        </Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                </View>
+              )}
               {activeTab === "models" && (
                 <View style={{ gap: 14, paddingBottom: 12 }}>
                   <View
@@ -590,6 +849,7 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
                                       style={{ fontSize: 11, fontWeight: "600", color: "#FAFAFA" }}
                                     >
                                       {file}
+                                      {families[file] ? ` [${families[file]}]` : ""}
                                     </Text>
                                   </Pressable>
                                 );
@@ -626,7 +886,72 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
                 ))}
             </ScrollView>
           )}
-          <View style={[s.row, { justifyContent: "space-between", marginTop: 12 }]}>
+          {confirmDiscard && (
+            <View
+              style={{
+                marginTop: 10,
+                padding: 10,
+                borderRadius: 12,
+                backgroundColor: "rgba(245,158,11,0.16)",
+                borderWidth: 1,
+                borderColor: "#F59E0B",
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+                flexWrap: "wrap",
+                gap: 8,
+              }}
+            >
+              <Text style={{ fontSize: 11.5, fontWeight: "700", color: "#FCD34D", flex: 1 }}>
+                You have unsaved changes. Save before closing?
+              </Text>
+              <View style={[s.row, { gap: 6 }]}>
+                <Pressable
+                  onPress={() => setConfirmDiscard(false)}
+                  style={{
+                    paddingHorizontal: 9,
+                    paddingVertical: 5,
+                    borderRadius: 8,
+                    backgroundColor: "#27272A",
+                  }}
+                >
+                  <Text style={{ fontSize: 11, fontWeight: "600", color: "#E4E4E7" }}>
+                    Keep Editing
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    setConfirmDiscard(false);
+                    onClose();
+                  }}
+                  style={{
+                    paddingHorizontal: 9,
+                    paddingVertical: 5,
+                    borderRadius: 8,
+                    backgroundColor: "#7F1D1D",
+                  }}
+                >
+                  <Text style={{ fontSize: 11, fontWeight: "700", color: "#FECACA" }}>
+                    Discard & Close
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => void save()}
+                  style={{
+                    paddingHorizontal: 10,
+                    paddingVertical: 5,
+                    borderRadius: 8,
+                    backgroundColor: "#1D4ED8",
+                  }}
+                >
+                  <Text style={{ fontSize: 11, fontWeight: "700", color: "#FFF" }}>
+                    Save & Close
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
+          <View style={[s.row, { justifyContent: "space-between", marginTop: 12, gap: 8 }]}>
             <Button small onPress={() => void reset()} disabled={saving}>
               <View style={[s.row, { gap: 5 }]}>
                 <RotateCcw size={14} color={colors.text} />
@@ -635,14 +960,21 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
                 </Text>
               </View>
             </Button>
-            <Button primary onPress={() => void save()} disabled={saving || !data}>
-              <View style={[s.row, { gap: 6 }]}>
-                <Save size={15} color="#FFF" />
-                <Text style={{ fontSize: 13, fontWeight: "600", color: "#FFF" }}>
-                  {saving ? "Saving..." : "Save Studio Settings"}
+            <View style={[s.row, { gap: 10 }]}>
+              {dirty && (
+                <Text style={{ fontSize: 11.5, fontWeight: "700", color: "#FBBF24" }}>
+                  ● Unsaved changes
                 </Text>
-              </View>
-            </Button>
+              )}
+              <Button primary onPress={() => void save()} disabled={saving || !data}>
+                <View style={[s.row, { gap: 6 }]}>
+                  <Save size={15} color="#FFF" />
+                  <Text style={{ fontSize: 13, fontWeight: "600", color: "#FFF" }}>
+                    {saving ? "Saving..." : "Save Studio Settings"}
+                  </Text>
+                </View>
+              </Button>
+            </View>
           </View>
         </View>
       </View>
