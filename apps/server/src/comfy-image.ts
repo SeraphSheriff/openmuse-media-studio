@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, resolve } from "node:path";
 import { detectModelFamily, readVideoSettings } from "./video-settings.js";
@@ -26,11 +26,170 @@ async function uploadImageToComfy(absPath: string): Promise<string> {
   return data.name || name;
 }
 
+function inferSlotType(inputName: string): string {
+  if (inputName.includes("model")) return "MODEL";
+  if (inputName.includes("clip")) return "CLIP";
+  if (inputName.includes("vae")) return "VAE";
+  if (
+    inputName.includes("positive") ||
+    inputName.includes("negative") ||
+    inputName.includes("conditioning")
+  )
+    return "CONDITIONING";
+  if (inputName.includes("latent") || inputName.includes("samples")) return "LATENT";
+  if (
+    inputName.includes("image") ||
+    inputName.includes("pixels") ||
+    inputName.includes("destination") ||
+    inputName.includes("source")
+  )
+    return "IMAGE";
+  if (inputName.includes("mask")) return "MASK";
+  return "*";
+}
+
+function apiGraphToUiWorkflow(graph: Record<string, unknown>) {
+  const entries = Object.entries(graph);
+  const links: Array<[number, number, number, number, number, string]> = [];
+  const outLinks = new Map<string, number[]>();
+  const inLink = new Map<string, number>();
+  let nextLink = 1;
+
+  for (const [dstKey, rawNode] of entries) {
+    const dstId = Number(dstKey);
+    const inputs = (rawNode as { inputs?: Record<string, unknown> })?.inputs ?? {};
+    for (const [inName, val] of Object.entries(inputs)) {
+      if (Array.isArray(val) && val.length === 2 && typeof val[1] === "number") {
+        const srcId = Number(val[0]);
+        const srcSlot = val[1];
+        const linkId = nextLink++;
+        const dstInputs = Object.entries(inputs).filter(
+          ([, v]) => Array.isArray(v) && v.length === 2 && typeof v[1] === "number",
+        );
+        const dstSlot = dstInputs.findIndex(([k]) => k === inName);
+        links.push([linkId, srcId, srcSlot, dstId, Math.max(0, dstSlot), inferSlotType(inName)]);
+        const oKey = `${srcId}:${srcSlot}`;
+        outLinks.set(oKey, [...(outLinks.get(oKey) ?? []), linkId]);
+        inLink.set(`${dstId}:${inName}`, linkId);
+      }
+    }
+  }
+
+  const colMap: Record<string, number> = {
+    UNETLoader: 0,
+    DualCLIPLoader: 0,
+    CLIPLoader: 0,
+    VAELoader: 0,
+    LoadImage: 0,
+    LoadImageMask: 0,
+    EmptySD3LatentImage: 0,
+    LoraLoader: 1,
+    ModelSamplingAuraFlow: 1,
+    CLIPTextEncode: 1,
+    VAEEncode: 1,
+    FluxGuidance: 2,
+    ReferenceLatent: 2,
+    SetLatentNoiseMask: 2,
+    KSampler: 3,
+    VAEDecode: 4,
+    ImageCompositeMasked: 4,
+    SaveImage: 5,
+  };
+  const colCounts: Record<number, number> = {};
+  const nodes = entries.map(([key, rawNode]) => {
+    const id = Number(key);
+    const node = rawNode as { class_type: string; inputs?: Record<string, unknown> };
+    const col = colMap[node.class_type] ?? 2;
+    const row = colCounts[col] ?? 0;
+    colCounts[col] = row + 1;
+    const inputsObj = node.inputs ?? {};
+    const nodeInputs = Object.entries(inputsObj)
+      .filter(([, v]) => Array.isArray(v) && v.length === 2)
+      .map(([name]) => ({
+        name,
+        type: inferSlotType(name),
+        link: inLink.get(`${id}:${name}`) ?? null,
+      }));
+    const widgetValues = Object.entries(inputsObj)
+      .filter(([, v]) => !(Array.isArray(v) && v.length === 2))
+      .flatMap(([k, v]) =>
+        node.class_type === "KSampler" && k === "seed"
+          ? [v, "fixed"]
+          : node.class_type === "LoadImage" && k === "image"
+            ? [v, "image"]
+            : [v],
+      );
+    const outTypes =
+      node.class_type === "LoraLoader"
+        ? ["MODEL", "CLIP"]
+        : node.class_type === "KSampler" ||
+            node.class_type === "VAEEncode" ||
+            node.class_type === "EmptySD3LatentImage" ||
+            node.class_type === "ReferenceLatent" ||
+            node.class_type === "SetLatentNoiseMask"
+          ? ["LATENT"]
+          : node.class_type === "VAEDecode" ||
+              node.class_type === "LoadImage" ||
+              node.class_type === "ImageCompositeMasked"
+            ? ["IMAGE"]
+            : node.class_type === "LoadImageMask"
+              ? ["MASK"]
+              : node.class_type === "VAELoader"
+                ? ["VAE"]
+                : node.class_type.includes("CLIP") && !node.class_type.includes("Encode")
+                  ? ["CLIP"]
+                  : node.class_type.includes("Encode") || node.class_type === "FluxGuidance"
+                    ? ["CONDITIONING"]
+                    : node.class_type === "SaveImage"
+                      ? []
+                      : ["MODEL"];
+    const nodeOutputs = outTypes.map((t, slot) => ({
+      name: t,
+      type: t,
+      links: outLinks.get(`${id}:${slot}`) ?? [],
+      slot_index: slot,
+    }));
+    return {
+      id,
+      type: node.class_type,
+      pos: [80 + col * 340, 80 + row * 230],
+      size: [300, 180],
+      flags: {},
+      order: col * 10 + row,
+      mode: 0,
+      inputs: nodeInputs,
+      outputs: nodeOutputs,
+      properties: { "Node name for S&R": node.class_type },
+      widgets_values: widgetValues,
+    };
+  });
+
+  return {
+    last_node_id: Math.max(20, ...nodes.map((n) => n.id)),
+    last_link_id: nextLink - 1,
+    nodes,
+    links,
+    groups: [],
+    config: {},
+    extra: {},
+    version: 0.4,
+  };
+}
+
 async function runGraphAndFetchPng(graph: Record<string, unknown>): Promise<Uint8Array> {
+  const uiWorkflow = apiGraphToUiWorkflow(graph);
+  const wfDir = resolve(homedir(), "ComfyUI", "user", "default", "workflows");
+  await mkdir(wfDir, { recursive: true }).catch(() => {});
+  await writeFile(resolve(wfDir, "OpenMuse_Live.json"), JSON.stringify(uiWorkflow, null, 2)).catch(
+    () => {},
+  );
   const qRes = await fetch(`${COMFY_URL}/prompt`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt: graph }),
+    body: JSON.stringify({
+      prompt: graph,
+      extra_data: { extra_pnginfo: { workflow: uiWorkflow } },
+    }),
   });
   if (!qRes.ok) {
     throw new Error(`ComfyUI image queue failed (${qRes.status}): ${await qRes.text()}`);
