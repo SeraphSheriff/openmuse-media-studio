@@ -1,9 +1,12 @@
 import { getVideoProgress } from "./comfy-video.ts";
 import { ensureLocalModelReady, readModelSettings, writeModelSettings } from "./model-settings.ts";
+import { cleanupPromptHistory, deletePromptHistory, readPromptHistory } from "./prompt-history.ts";
 import {
   DEFAULT_VIDEO_SETTINGS,
   readVideoSettings,
   STUDIO_SCHEMA,
+  scanComfyInventory,
+  verifyComfyInventory,
   writeVideoSettings,
 } from "./video-settings.ts";
 import "./config.ts";
@@ -557,18 +560,43 @@ export async function createApp(
     return c.json({ ok: true, path: target, localDefault });
   });
 
+  app.get("/api/prompt-history", async (c) => c.json({ items: await readPromptHistory() }));
+  app.delete("/api/prompt-history/:id", async (c) => {
+    const items = await deletePromptHistory(decodeURIComponent(c.req.param("id")));
+    return c.json({ ok: true, items });
+  });
+  app.post("/api/prompt-history/cleanup", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const mode = body?.mode === "orphaned" ? "orphaned" : "all";
+    const items = await cleanupPromptHistory(mode);
+    return c.json({ ok: true, items });
+  });
+  app.delete("/api/prompt-history", async (c) => {
+    const id = c.req.query("id") || undefined;
+    const rawMode = c.req.query("mode");
+    const mode = rawMode === "orphaned" || rawMode === "all" ? rawMode : undefined;
+    return c.json({
+      ok: true,
+      items: (await id)
+        ? deletePromptHistory(id ?? "")
+        : cleanupPromptHistory(mode === "orphaned" ? "orphaned" : "all"),
+    });
+  });
   app.get("/api/media-gallery", async (c) => {
     const { readdir, stat } = await import("node:fs/promises");
     const { resolve } = await import("node:path");
     const genDir = resolve(process.cwd(), "generated");
     try {
       const names = await readdir(genDir);
+      const history = await readPromptHistory();
+      const promptByFile = new Map(history.map((h) => [h.fileName, h.prompt]));
       const items: Array<{
         name: string;
         kind: "image" | "video" | "audio";
         sizeKb: number;
         mtimeMs: number;
         url: string;
+        prompt?: string;
       }> = [];
       for (const name of names) {
         if (!/\.(png|jpe?g|webp|gif|mp4|webm|mp3|wav|ogg|m4a|flac)$/i.test(name)) continue;
@@ -584,6 +612,7 @@ export async function createApp(
           sizeKb: Math.round(st.size / 1024),
           mtimeMs: st.mtimeMs,
           url: `/media-file/${encodeURIComponent(name)}`,
+          prompt: promptByFile.get(name),
         });
       }
       items.sort((a, b) => b.mtimeMs - a.mtimeMs);
@@ -761,6 +790,42 @@ export async function createApp(
   app.post("/api/video-settings/reset", async (c) =>
     c.json({ settings: await writeVideoSettings(DEFAULT_VIDEO_SETTINGS), schema: STUDIO_SCHEMA }),
   );
+  app.get("/api/comfy-inventory", async (c) =>
+    c.json({ inventory: await scanComfyInventory(), settings: await readVideoSettings() }),
+  );
+  app.post("/api/comfy-inventory/verify", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { autoSync?: boolean };
+    return c.json(await verifyComfyInventory(Boolean(body?.autoSync)));
+  });
+  app.post("/api/transcribe", async (c) => {
+    const { execFile } = await import("node:child_process");
+    const { writeFile, rm } = await import("node:fs/promises");
+    const { promisify } = await import("node:util");
+    const execAsync = promisify(execFile);
+    const body = (await c.req.json()) as { audioBase64?: string };
+    if (!body?.audioBase64) return c.json({ ok: false, error: "No audio received" }, 400);
+    const id = Date.now();
+    const rawPath = `/tmp/oms_rec_${id}.webm`;
+    const wavPath = `/tmp/oms_rec_${id}.wav`;
+    try {
+      await writeFile(rawPath, Buffer.from(body.audioBase64, "base64"));
+      await execAsync("ffmpeg", ["-y", "-i", rawPath, "-ar", "16000", "-ac", "1", wavPath]);
+      const py = "/home/cowboy/ComfyUI/venv/bin/python3";
+      const code =
+        "import sys, torch, transformers; pipe = transformers.pipeline('automatic-speech-recognition', model='openai/whisper-small.en', device=0 if torch.cuda.is_available() else -1); print(pipe(sys.argv.pop()).get('text', '').strip())";
+      const { stdout } = await execAsync(py, ["-c", code, wavPath], { timeout: 60_000 });
+      const lines = stdout.trim().split(/\r?\n/);
+      return c.json({ ok: true, text: (lines[lines.length - 1] || "").trim() });
+    } catch (err) {
+      return c.json(
+        { ok: false, error: err instanceof Error ? err.message : "Transcription failed" },
+        500,
+      );
+    } finally {
+      await rm(rawPath, { force: true }).catch(() => {});
+      await rm(wavPath, { force: true }).catch(() => {});
+    }
+  });
   app.get("/", (c) =>
     c.json({ name: "OpenMuse", app: "http://localhost:8081", health: "/api/health" }),
   );

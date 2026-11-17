@@ -17,7 +17,7 @@ export function BackgroundUpdates() {
     if (!update) return;
     setBusy(true);
     try {
-      await mutate(`/notifications/${update.id}/read`, {});
+      await mutate(`/notifications/${update.id}/delete`, {});
       setError("");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -58,6 +58,19 @@ export function BackgroundUpdates() {
             {updates.length - 1} more updates
           </Button>
         )}
+        <Button
+          small
+          danger
+          disabled={busy}
+          onPress={() => {
+            setBusy(true);
+            void mutate("/notifications/clear", {})
+              .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+              .finally(() => setBusy(false));
+          }}
+        >
+          Clear all
+        </Button>
       </View>
       <ErrorNotice error={error} />
     </Card>

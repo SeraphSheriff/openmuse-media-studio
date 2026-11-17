@@ -7,7 +7,7 @@ import {
   useRenderTool,
   useRenderToolCall,
 } from "@copilotkit/react-native/headless";
-import { ArrowDown, ArrowUp, FileText, RotateCcw, Square, X } from "lucide-react-native";
+import { ArrowDown, ArrowUp, FileText, Mic, RotateCcw, Square, X } from "lucide-react-native";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   Keyboard,
@@ -372,15 +372,173 @@ export function ChatScreen({
   const renderToolCall = useRenderToolCall();
   const [draft, setDraft] = useState("");
   const [focused, setFocused] = useState(false);
+  const [dictating, setDictating] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const recRef = useRef<{ recorder: MediaRecorder; stream: MediaStream; chunks: Blob[] } | null>(
+    null,
+  );
+  const toggleDictation = async () => {
+    if (transcribing) {
+      setTranscribing(false);
+      return;
+    }
+    if (dictating && recRef.current) {
+      recRef.current.recorder.stop();
+      setDictating(false);
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const chunks: Blob[] = [];
+      const recorder = new MediaRecorder(stream);
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+      recorder.onstop = async () => {
+        for (const tr of stream.getTracks()) tr.stop();
+        recRef.current = null;
+        if (!chunks.length) return;
+        setTranscribing(true);
+        try {
+          const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+          const buf = await blob.arrayBuffer();
+          const bytes = new Uint8Array(buf);
+          let bin = "";
+          for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+          const res = await api.request<{ ok?: boolean; text?: string; error?: string }>(
+            "/api/transcribe",
+            {
+              audioBase64: btoa(bin),
+            },
+          );
+          if (res?.text?.trim()) {
+            const spoken = res.text.trim();
+            setDraft((d) => (d.trim() ? `${d.trim()} ${spoken}` : spoken));
+          } else if (res?.error) {
+            window.alert(res.error);
+          }
+        } catch (err) {
+          window.alert(err instanceof Error ? err.message : "Voice transcription failed");
+        } finally {
+          setTranscribing(false);
+        }
+      };
+      recRef.current = { recorder, stream, chunks };
+      recorder.start(250);
+      setDictating(true);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Microphone permission denied");
+    }
+  };
+  const [activeLlm, setActiveLlm] = useState<"cloud" | "q4" | "q5">("cloud");
+  const [studioCfg, setStudioCfg] = useState<Record<string, string | number | boolean>>({});
+  useEffect(() => {
+    void api
+      .request<{ mode?: "cloud" | "q4" | "q5" }>("/api/model-settings")
+      .then((r) => {
+        if (r?.mode === "cloud" || r?.mode === "q4" || r?.mode === "q5") setActiveLlm(r.mode);
+      })
+      .catch(() => {});
+    void api
+      .request<{ settings?: Record<string, string | number | boolean> }>("/api/video-settings")
+      .then((r) => {
+        if (r?.settings) setStudioCfg(r.settings);
+      })
+      .catch(() => {});
+  }, [api, draft.length === 1]);
   const [inputHeight, setInputHeight] = useState(44);
   const [showResults, setShowResults] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
-  // Replayed messages show before connectAgent returns; new turns wait until it does.
   const [syncing, setSyncing] = useState(false);
   const [picking, setPicking] = useState(false);
   const [attachments, setAttachments] = useState<string[]>([]);
+  const preflight = (() => {
+    const t = draft.trim();
+    if (!t) return null;
+    const isMedia =
+      attachments.length > 0 ||
+      /\.(png|jpe?g|webp|gif|mp4|mov)\b/i.test(t) ||
+      /^\s*(please\s+)?(generate|create|draw|render|paint|animate|restyle|extend|edit|modify|change|turn|make)\s+(a|an|the|this|that|my|him|her|it|into)\b/i.test(
+        t,
+      );
+    const hasRestrictedTerms = /\b(qwert|asdf)\b/i.test(t);
+    const isEdit = /\b(edit|change|replace|make|turn|keep|same|exact)\b/i.test(t);
+    const hasExactLock = /\b(exact|same|preserve|keep|identical)\b/i.test(t);
+    if (activeLlm === "cloud" && hasRestrictedTerms) {
+      return {
+        level: "red" as const,
+        label: "Likely Blocked by Cloud Guardrail",
+        detail:
+          "Gemini Cloud filters sensitive anatomy/nudity terms before reaching local ComfyUI.",
+        needsLocal: true,
+        needsLock: isEdit && !hasExactLock,
+        needsDenoiseFix: false,
+        needsVideoLockFix: false,
+      };
+    }
+    if (activeLlm === "cloud" && isMedia) {
+      return {
+        level: "amber" as const,
+        label: "Cloud LLM May Rewrite Prompt",
+        detail: "Gemini Cloud may rephrase or soften your prompt before passing it to ComfyUI.",
+        needsLocal: true,
+        needsLock: isEdit && !hasExactLock,
+      };
+    }
+    if (!isMedia && !hasRestrictedTerms && !/\.(png|jpe?g|webp|mp4|mov)\b/i.test(t)) return null;
+    const isVideo = /\b(video|animate|clip|extend|restyle|motion|mp4|mov)\b/i.test(t);
+    const curDenoise = Number(studioCfg.imageDenoise ?? 0.3);
+    const curI2vLock = Number(studioCfg.i2vBaseStrength ?? 0.92);
+    const curI2vComp = Number(studioCfg.i2vImgCompression ?? 8);
+    const denoiseTooHigh = !isVideo && hasExactLock && curDenoise > 0.35;
+    const videoLockWeak = isVideo && hasExactLock && (curI2vLock < 0.95 || curI2vComp > 0);
+    if (denoiseTooHigh) {
+      return {
+        level: "red" as const,
+        label: `Exact Edit Blocked by Denoise (${curDenoise})`,
+        detail: `Edit / Restyle Denoise is ${curDenoise} (> 0.35), which will alter facial and body details even with Kontext.`,
+        needsLocal: activeLlm === "cloud",
+        needsLock: false,
+        needsDenoiseFix: true,
+        needsVideoLockFix: false,
+      };
+    }
+    if (videoLockWeak) {
+      return {
+        level: "amber" as const,
+        label: "Exact Video Lock Weakened by Studio Settings",
+        detail: `Base Lock is ${curI2vLock} and Compression is ${curI2vComp} — subject identity may drift across frames.`,
+        needsLocal: activeLlm === "cloud",
+        needsLock: false,
+        needsDenoiseFix: false,
+        needsVideoLockFix: true,
+      };
+    }
+    if (isEdit && !hasExactLock) {
+      return {
+        level: "amber" as const,
+        label: "Subject May Drift Without Lock",
+        detail:
+          "Local pipeline active, but adding an exact-subject lock keeps full body & face untouched.",
+        needsLocal: false,
+        needsLock: true,
+        needsDenoiseFix: false,
+        needsVideoLockFix: false,
+      };
+    }
+    return {
+      level: "green" as const,
+      label: "Direct Local Execution Ready",
+      detail:
+        "Local Qwen3 + ComfyUI active — prompt will execute directly without cloud filtering.",
+      needsLocal: false,
+      needsLock: false,
+      needsDenoiseFix: false,
+      needsVideoLockFix: false,
+    };
+  })();
   const list = useRef<ScrollView>(null);
   const [queue] = useState(() => new ConversationQueue());
   const choiceCompletions = useRef(
@@ -1045,6 +1203,224 @@ export function ChatScreen({
                 ))}
             </View>
           )}
+          {preflight && (
+            <View
+              style={{
+                marginBottom: 8,
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+                borderRadius: 14,
+                borderWidth: 1,
+                borderColor:
+                  preflight.level === "red"
+                    ? "#EF4444"
+                    : preflight.level === "amber"
+                      ? "#F59E0B"
+                      : "#22C55E",
+                backgroundColor:
+                  preflight.level === "red"
+                    ? "rgba(239,68,68,0.12)"
+                    : preflight.level === "amber"
+                      ? "rgba(245,158,11,0.12)"
+                      : "rgba(34,197,94,0.10)",
+                gap: 6,
+              }}
+            >
+              <View style={[s.row, { justifyContent: "space-between", gap: 8, flexWrap: "wrap" }]}>
+                <View style={[s.row, { gap: 6 }]}>
+                  <View
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: 4,
+                      backgroundColor:
+                        preflight.level === "red"
+                          ? "#EF4444"
+                          : preflight.level === "amber"
+                            ? "#F59E0B"
+                            : "#22C55E",
+                    }}
+                  />
+                  <Text style={{ fontSize: 11.5, fontWeight: "700", color: colors.text }}>
+                    {preflight.label}
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 10.5, color: colors.muted }}>
+                  {activeLlm === "cloud"
+                    ? "LLM: Gemini Cloud"
+                    : activeLlm === "q5"
+                      ? "LLM: Qwen3 14B (Local)"
+                      : "LLM: Qwen3 8B (Local)"}
+                </Text>
+              </View>
+              <Text style={{ fontSize: 11, color: colors.muted }}>{preflight.detail}</Text>
+              <View style={[s.row, { gap: 6, flexWrap: "wrap" }]}>
+                {preflight.needsDenoiseFix && (
+                  <Pressable
+                    onPress={() => {
+                      setStudioCfg((p) => ({
+                        ...p,
+                        imageDenoise: 0.25,
+                        editEngine: "flux_kontext",
+                      }));
+                      void api
+                        .request("/api/video-settings", {
+                          imageDenoise: 0.25,
+                          editEngine: "flux_kontext",
+                        })
+                        .catch(() => {});
+                    }}
+                    style={{
+                      paddingHorizontal: 9,
+                      paddingVertical: 4,
+                      borderRadius: 10,
+                      backgroundColor: "#DC2626",
+                    }}
+                  >
+                    <Text style={{ fontSize: 10.5, fontWeight: "700", color: "#FFF" }}>
+                      Fix: Set Denoise 0.25 + Kontext
+                    </Text>
+                  </Pressable>
+                )}
+                {preflight.needsVideoLockFix && (
+                  <Pressable
+                    onPress={() => {
+                      setStudioCfg((p) => ({
+                        ...p,
+                        i2vBaseStrength: 0.97,
+                        i2vUpscaleStrength: 0.88,
+                        i2vImgCompression: 0,
+                      }));
+                      void api
+                        .request("/api/video-settings", {
+                          i2vBaseStrength: 0.97,
+                          i2vUpscaleStrength: 0.88,
+                          i2vImgCompression: 0,
+                        })
+                        .catch(() => {});
+                    }}
+                    style={{
+                      paddingHorizontal: 9,
+                      paddingVertical: 4,
+                      borderRadius: 10,
+                      backgroundColor: "#D97706",
+                    }}
+                  >
+                    <Text style={{ fontSize: 10.5, fontWeight: "700", color: "#FFF" }}>
+                      Fix: Max Video Identity Lock
+                    </Text>
+                  </Pressable>
+                )}
+                {preflight.needsLocal && (
+                  <Pressable
+                    onPress={() => {
+                      setActiveLlm("q4");
+                      void api.request("/api/model-settings", { mode: "q4" }).catch(() => {});
+                    }}
+                    style={{
+                      paddingHorizontal: 9,
+                      paddingVertical: 4,
+                      borderRadius: 10,
+                      backgroundColor: "#1D4ED8",
+                    }}
+                  >
+                    <Text style={{ fontSize: 10.5, fontWeight: "700", color: "#FFF" }}>
+                      Switch to Local Qwen3
+                    </Text>
+                  </Pressable>
+                )}
+                {preflight.needsLock && (
+                  <Pressable
+                    onPress={() =>
+                      setDraft(
+                        (d) =>
+                          `Keep the exact same person, full body, and face unchanged; ${d.trim()}`,
+                      )
+                    }
+                    style={{
+                      paddingHorizontal: 9,
+                      paddingVertical: 4,
+                      borderRadius: 10,
+                      backgroundColor: "#27272A",
+                      borderWidth: 1,
+                      borderColor: "#3F3F46",
+                    }}
+                  >
+                    <Text style={{ fontSize: 10.5, fontWeight: "600", color: "#FAFAFA" }}>
+                      + Exact Full-Body & Face Lock
+                    </Text>
+                  </Pressable>
+                )}
+                <Pressable
+                  onPress={() =>
+                    setDraft((d) => `${d.trim()} (edit background only, keep subject untouched)`)
+                  }
+                  style={{
+                    paddingHorizontal: 9,
+                    paddingVertical: 4,
+                    borderRadius: 10,
+                    backgroundColor: "#27272A",
+                    borderWidth: 1,
+                    borderColor: "#3F3F46",
+                  }}
+                >
+                  <Text style={{ fontSize: 10.5, fontWeight: "600", color: "#FAFAFA" }}>
+                    + Mask Background Only
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() =>
+                    setDraft(
+                      (d) => `${d.trim()}, photorealistic detail, natural lighting, 85mm lens`,
+                    )
+                  }
+                  style={{
+                    paddingHorizontal: 9,
+                    paddingVertical: 4,
+                    borderRadius: 10,
+                    backgroundColor: "#27272A",
+                    borderWidth: 1,
+                    borderColor: "#3F3F46",
+                  }}
+                >
+                  <Text style={{ fontSize: 10.5, fontWeight: "600", color: "#FAFAFA" }}>
+                    + Cinema Detail
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
+          {(dictating || transcribing) && (
+            <View
+              style={[
+                s.row,
+                {
+                  marginBottom: 8,
+                  paddingHorizontal: 12,
+                  paddingVertical: 7,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: dictating ? "#EF4444" : "#F59E0B",
+                  backgroundColor: dictating ? "rgba(239,68,68,0.12)" : "rgba(245,158,11,0.14)",
+                  gap: 8,
+                },
+              ]}
+            >
+              <View
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 4,
+                  backgroundColor: dictating ? "#EF4444" : "#F59E0B",
+                }}
+              />
+              <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>
+                {dictating
+                  ? "Recording audio… Tap the red Mic button when finished."
+                  : "Transcribing speech on RTX 3090 Whisper… Please wait."}
+              </Text>
+            </View>
+          )}
           <View style={[s.row, { gap: 7, alignItems: "flex-end" }]}>
             <Pressable
               accessibilityRole="button"
@@ -1115,8 +1491,33 @@ export function ChatScreen({
             />
             <Pressable
               accessibilityRole="button"
+              accessibilityLabel={dictating ? "Stop voice dictation" : "Start voice dictation"}
+              disabled={transcribing}
+              onPress={() => void toggleDictation()}
+              style={({ pressed }) => ({
+                width: 44,
+                height: 44,
+                borderRadius: 24,
+                backgroundColor: dictating
+                  ? "rgba(239,68,68,0.18)"
+                  : pressed
+                    ? colors.sky
+                    : "transparent",
+                borderWidth: dictating ? 1 : 0,
+                borderColor: dictating ? "#EF4444" : "transparent",
+                alignItems: "center",
+                justifyContent: "center",
+              })}
+            >
+              <Mic
+                size={20}
+                color={dictating ? "#EF4444" : transcribing ? "#F59E0B" : colors.muted}
+              />
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
               accessibilityLabel={replying ? "Stop reply" : "Send message"}
-              disabled={!replying && (!draft.trim() || !loaded || !isReady)}
+              disabled={transcribing || (!replying && (!draft.trim() || !loaded || !isReady))}
               onPress={replying ? () => void stop() : send}
               style={({ pressed }) => ({
                 width: 44,

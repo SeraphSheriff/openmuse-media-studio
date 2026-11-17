@@ -9,7 +9,7 @@
     "newArchEnabled": true,
     "ios": { "supportsTablet": true, "bundleIdentifier": "app.openmuse.mobile" },
     "android": { "package": "app.openmuse.mobile" },
-    "web": { "bundler": "metro", "name": "OpenMuse — a little room for everything" },
+    "web": { "bundler": "metro", "name": "OMS · Local AI Studio" },
     "plugins": [
       "expo-document-picker",
       "@config-plugins/react-native-blob-util",

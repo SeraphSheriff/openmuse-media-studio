@@ -838,6 +838,14 @@ interface MediaGalleryItem {
   sizeKb: number;
   mtimeMs: number;
   url: string;
+  prompt?: string;
+}
+interface PromptHistoryEntry {
+  id: string;
+  timestamp: string;
+  tool: string;
+  prompt: string;
+  fileName: string;
 }
 function MediaGalleryDock({
   api,
@@ -877,15 +885,33 @@ function MediaGalleryDock({
   const recChunksRef = useRef<Blob[]>([]);
   const recTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [copiedName, setCopiedName] = useState("");
+  const [promptsView, setPromptsView] = useState(false);
+  const [dropzoneOpen, setDropzoneOpen] = useState(true);
+  const [refreshLabel, setRefreshLabel] = useState("Refresh");
+  const [promptHistory, setPromptHistory] = useState<PromptHistoryEntry[]>([]);
+  const [expandedPromptName, setExpandedPromptName] = useState("");
+  const [hiddenItems, setHiddenItems] = useState<Record<string, boolean>>({});
+  const [copiedPromptId, setCopiedPromptId] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const mediaSrc = (u: string) => (u.startsWith("http") ? u : API_URL + u);
-  const refresh = () => {
-    api
-      .request<{ items?: MediaGalleryItem[] }>("/api/media-gallery")
-      .then((r) => {
+  const refresh = (manual = false) => {
+    if (manual) setRefreshLabel("Refreshing…");
+    const q = `?_t=${Date.now()}`;
+    Promise.all([
+      api.request<{ items?: MediaGalleryItem[] }>(`/api/media-gallery${q}`).then((r) => {
         if (Array.isArray(r?.items)) setItems(r.items);
-      })
-      .catch(() => {});
+      }),
+      api.request<{ items?: PromptHistoryEntry[] }>(`/api/prompt-history${q}`).then((r) => {
+        if (Array.isArray(r?.items)) setPromptHistory(r.items);
+      }),
+    ])
+      .catch(() => {})
+      .finally(() => {
+        if (manual) {
+          setRefreshLabel("Refreshed ✓");
+          setTimeout(() => setRefreshLabel("Refresh"), 1200);
+        }
+      });
   };
   useEffect(() => {
     refresh();
@@ -1002,7 +1028,26 @@ function MediaGalleryDock({
         <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>Media Studio</Text>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
           <Pressable
-            onPress={refresh}
+            onPress={() => setPromptsView((v) => !v)}
+            style={{
+              paddingHorizontal: 7,
+              paddingVertical: 3,
+              borderRadius: 8,
+              backgroundColor: promptsView ? colors.blueDark : colors.canvas,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 10.5,
+                fontWeight: "600",
+                color: promptsView ? "#FFFFFF" : colors.text,
+              }}
+            >
+              {promptsView ? "Gallery" : "Prompts"}
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => refresh(true)}
             style={{
               paddingHorizontal: 7,
               paddingVertical: 3,
@@ -1010,7 +1055,9 @@ function MediaGalleryDock({
               backgroundColor: colors.canvas,
             }}
           >
-            <Text style={{ fontSize: 10.5, fontWeight: "600", color: colors.muted }}>Refresh</Text>
+            <Text style={{ fontSize: 10.5, fontWeight: "600", color: colors.muted }}>
+              {refreshLabel}
+            </Text>
           </Pressable>
           <Pressable
             onPress={() => setOpen(false)}
@@ -1033,201 +1080,467 @@ function MediaGalleryDock({
           borderBottomColor: colors.line,
         }}
       >
-        <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text, marginBottom: 6 }}>
-          Input Dropzone:
-        </Text>
-        <button
-          type="button"
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") fileInputRef.current?.click();
-          }}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragOver(true);
-          }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            setDragOver(false);
-            void uploadFiles(e.dataTransfer?.files ?? null);
-          }}
-          onClick={() => fileInputRef.current?.click()}
-          style={{
-            border: `1.5px dashed ${dragOver ? "#10B981" : "#374151"}`,
-            borderRadius: 10,
-            padding: "11px 10px",
-            textAlign: "center",
-            backgroundColor: dragOver ? "rgba(16,185,129,0.12)" : "rgba(17,24,39,0.55)",
-            cursor: "pointer",
-            color: "#E5E7EB",
-            fontSize: 11,
-            fontWeight: 600,
-          }}
-        >
-          {uploading ? "Uploading to generated/…" : "Drop images, videos, or audio here"}
-          {copiedName ? (
-            <div style={{ fontSize: 10, color: "#10B981", marginTop: 4 }}>
-              Saved & copied: {copiedName}
-            </div>
-          ) : null}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*,video/*,audio/*"
-            multiple
-            style={{ display: "none" }}
-            onChange={(e) => {
-              void uploadFiles(e.target.files);
-              e.target.value = "";
-            }}
-          />
-        </button>
         <Pressable
-          onPress={() => void toggleMicRecord()}
+          onPress={() => setDropzoneOpen((v) => !v)}
           style={{
-            marginTop: 6,
-            paddingVertical: 6,
-            paddingHorizontal: 10,
-            borderRadius: 8,
-            backgroundColor: recording ? colors.danger : colors.canvas,
-            borderWidth: 1,
-            borderColor: recording ? colors.danger : colors.line,
+            flexDirection: "row",
             alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: dropzoneOpen ? 6 : 0,
           }}
         >
-          <Text
-            style={{ fontSize: 11, fontWeight: "700", color: recording ? "#FFFFFF" : colors.text }}
-          >
-            {recording ? `■ Stop & Save (${recSec}s)` : "● Record Voice Sample (Mic)"}
+          <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>
+            {dropzoneOpen ? "▾" : "▸"} Input Dropzone:
+          </Text>
+          <Text style={{ fontSize: 10, fontWeight: "600", color: colors.muted }}>
+            {dropzoneOpen ? "Collapse" : "Expand"}
           </Text>
         </Pressable>
-      </View>
-      <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}>
-        <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>
-          Generated & Uploaded ({items.length})
-        </Text>
-      </View>
-      <ScrollView style={{ flex: 1, paddingHorizontal: 10, paddingBottom: 10 }}>
-        {items.length === 0 ? (
-          <Text style={{ fontSize: 11, color: colors.muted, padding: 8 }}>
-            No images or videos in generated/ yet.
-          </Text>
-        ) : (
-          items.map((item) => (
-            <View
-              key={item.name}
+        {dropzoneOpen ? (
+          <>
+            <button
+              type="button"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") fileInputRef.current?.click();
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragOver(true);
+              }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOver(false);
+                void uploadFiles(e.dataTransfer?.files ?? null);
+              }}
+              onClick={() => fileInputRef.current?.click()}
               style={{
-                backgroundColor: colors.canvas,
+                border: `1.5px dashed ${dragOver ? "#10B981" : "#374151"}`,
                 borderRadius: 10,
-                borderWidth: 1,
-                borderColor: colors.line,
-                padding: 7,
-                marginBottom: 8,
-                gap: 6,
+                padding: "11px 10px",
+                textAlign: "center",
+                backgroundColor: dragOver ? "rgba(16,185,129,0.12)" : "rgba(17,24,39,0.55)",
+                cursor: "pointer",
+                color: "#E5E7EB",
+                fontSize: 11,
+                fontWeight: 600,
               }}
             >
-              {item.kind === "audio" ? (
-                <audio src={mediaSrc(item.url)} controls style={{ width: "100%", height: 36 }}>
-                  <track kind="captions" />
-                </audio>
-              ) : item.kind === "video" ? (
-                <video
-                  src={mediaSrc(item.url)}
-                  controls
-                  muted
-                  playsInline
-                  style={{
-                    width: "100%",
-                    maxHeight: 155,
-                    borderRadius: 7,
-                    backgroundColor: "#000",
-                  }}
-                />
-              ) : (
-                <img
-                  src={mediaSrc(item.url)}
-                  alt={item.name}
-                  style={{ width: "100%", maxHeight: 165, objectFit: "cover", borderRadius: 7 }}
-                />
-              )}
-              <View
+              {uploading ? "Uploading to generated/…" : "Drop images, videos, or audio here"}
+              {copiedName ? (
+                <div style={{ fontSize: 10, color: "#10B981", marginTop: 4 }}>
+                  Saved & copied: {copiedName}
+                </div>
+              ) : null}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,video/*,audio/*"
+                multiple
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  void uploadFiles(e.target.files);
+                  e.target.value = "";
+                }}
+              />
+            </button>
+            <Pressable
+              onPress={() => void toggleMicRecord()}
+              style={{
+                marginTop: 6,
+                paddingVertical: 6,
+                paddingHorizontal: 10,
+                borderRadius: 8,
+                backgroundColor: recording ? colors.danger : colors.canvas,
+                borderWidth: 1,
+                borderColor: recording ? colors.danger : colors.line,
+                alignItems: "center",
+              }}
+            >
+              <Text
                 style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 6,
+                  fontSize: 11,
+                  fontWeight: "700",
+                  color: recording ? "#FFFFFF" : colors.text,
                 }}
               >
-                <Text
-                  style={{ flex: 1, fontSize: 10.5, fontWeight: "600", color: colors.text }}
-                  numberOfLines={1}
-                >
-                  {item.name}
-                </Text>
+                {recording ? `■ Stop & Save (${recSec}s)` : "● Record Voice Sample (Mic)"}
+              </Text>
+            </Pressable>
+          </>
+        ) : null}
+      </View>
+      {promptsView ? (
+        <ScrollView style={{ flex: 1, paddingHorizontal: 10, paddingVertical: 8 }}>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 6,
+              marginBottom: 8,
+            }}
+          >
+            <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>
+              Saved Prompts ({promptHistory.length})
+            </Text>
+            {promptHistory.length > 0 ? (
+              <View style={{ flexDirection: "row", gap: 4 }}>
                 <Pressable
                   onPress={() => {
-                    setCopiedName(item.name);
-                    if (typeof navigator !== "undefined" && navigator.clipboard)
-                      void navigator.clipboard.writeText(item.name).catch(() => {});
-                  }}
-                  style={{
-                    paddingHorizontal: 7,
-                    paddingVertical: 3,
-                    borderRadius: 6,
-                    backgroundColor: colors.card,
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontSize: 10,
-                      fontWeight: "600",
-                      color: copiedName === item.name ? colors.green : colors.text,
-                    }}
-                  >
-                    {copiedName === item.name ? "Copied" : "Copy"}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => {
-                    if (typeof window !== "undefined")
-                      window.open(mediaSrc(item.url), "_blank", "noopener,noreferrer");
-                  }}
-                  style={{
-                    paddingHorizontal: 7,
-                    paddingVertical: 3,
-                    borderRadius: 6,
-                    backgroundColor: colors.card,
-                  }}
-                >
-                  <Text style={{ fontSize: 10, fontWeight: "600", color: colors.text }}>↗</Text>
-                </Pressable>
-                <Pressable
-                  accessibilityLabel={`Delete ${item.name}`}
-                  onPress={() => {
-                    void fetch(`${API_URL}/api/media-file/${encodeURIComponent(item.name)}`, {
-                      method: "DELETE",
-                      headers: api.token ? { Authorization: `Bearer ${api.token}` } : {},
-                    })
-                      .then(() => {
-                        setItems((prev) => prev.filter((x) => x.name !== item.name));
-                        refresh();
+                    void api
+                      .request<{ items?: PromptHistoryEntry[] }>("/api/prompt-history/cleanup", {
+                        mode: "orphaned",
+                      })
+                      .then((r) => {
+                        if (Array.isArray(r?.items)) setPromptHistory(r.items);
                       })
                       .catch(() => {});
                   }}
                   style={{
-                    paddingHorizontal: 7,
-                    paddingVertical: 3,
+                    paddingHorizontal: 6,
+                    paddingVertical: 2,
                     borderRadius: 6,
                     backgroundColor: colors.card,
                   }}
                 >
-                  <Text style={{ fontSize: 10, fontWeight: "700", color: colors.danger }}>Del</Text>
+                  <Text style={{ fontSize: 9.5, fontWeight: "600", color: colors.muted }}>
+                    Clean Orphaned
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    void api
+                      .request<{ items?: PromptHistoryEntry[] }>("/api/prompt-history/cleanup", {
+                        mode: "all",
+                      })
+                      .then((r) => {
+                        if (Array.isArray(r?.items)) setPromptHistory(r.items);
+                      })
+                      .catch(() => {});
+                  }}
+                  style={{
+                    paddingHorizontal: 6,
+                    paddingVertical: 2,
+                    borderRadius: 6,
+                    backgroundColor: colors.card,
+                  }}
+                >
+                  <Text style={{ fontSize: 9.5, fontWeight: "700", color: colors.danger }}>
+                    Clear All
+                  </Text>
                 </Pressable>
               </View>
-            </View>
-          ))
-        )}
-      </ScrollView>
+            ) : null}
+          </View>
+          {promptHistory.length === 0 ? (
+            <Text style={{ fontSize: 11, color: colors.muted }}>No saved prompts yet.</Text>
+          ) : (
+            promptHistory.map((p) => (
+              <View
+                key={p.id}
+                style={{
+                  backgroundColor: colors.canvas,
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: colors.line,
+                  padding: 8,
+                  marginBottom: 8,
+                  gap: 5,
+                }}
+              >
+                <View
+                  style={{
+                    flexDirection: "row",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  <Text
+                    style={{ flex: 1, fontSize: 10, fontWeight: "700", color: colors.blue }}
+                    numberOfLines={1}
+                  >
+                    {p.tool} · {p.fileName}
+                  </Text>
+                  <Pressable
+                    onPress={() => {
+                      setCopiedPromptId(p.id);
+                      void navigator.clipboard?.writeText(p.prompt).catch(() => {});
+                    }}
+                    style={{
+                      paddingHorizontal: 7,
+                      paddingVertical: 2,
+                      borderRadius: 6,
+                      backgroundColor: colors.card,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 10,
+                        fontWeight: "600",
+                        color: copiedPromptId === p.id ? colors.green : colors.text,
+                      }}
+                    >
+                      {copiedPromptId === p.id ? "Copied" : "Copy"}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => {
+                      void fetch(`${API_URL}/api/prompt-history/${encodeURIComponent(p.id)}`, {
+                        method: "DELETE",
+                        headers: api.token ? { Authorization: `Bearer ${api.token}` } : {},
+                      })
+                        .then((res) => res.json())
+                        .then((r) => {
+                          if (Array.isArray(r?.items)) setPromptHistory(r.items);
+                          else setPromptHistory((prev) => prev.filter((x) => x.id !== p.id));
+                        })
+                        .catch(() => {});
+                    }}
+                    style={{
+                      paddingHorizontal: 7,
+                      paddingVertical: 2,
+                      borderRadius: 6,
+                      backgroundColor: colors.card,
+                    }}
+                  >
+                    <Text style={{ fontSize: 10, fontWeight: "700", color: colors.danger }}>
+                      Del
+                    </Text>
+                  </Pressable>
+                </View>
+                <Text style={{ fontSize: 11, lineHeight: 15, color: colors.text }}>{p.prompt}</Text>
+              </View>
+            ))
+          )}
+        </ScrollView>
+      ) : (
+        <ScrollView style={{ flex: 1, paddingHorizontal: 10, paddingVertical: 8 }}>
+          <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text, marginBottom: 8 }}>
+            Generated & Uploaded ({items.length})
+          </Text>
+          {items.length === 0 ? (
+            <Text style={{ fontSize: 11, color: colors.muted }}>No files in generated/ yet.</Text>
+          ) : (
+            items.map((item) => {
+              const openP = expandedPromptName === item.name;
+              const isHidden = Boolean(hiddenItems[item.name]);
+              return (
+                <View
+                  key={item.name}
+                  style={{
+                    backgroundColor: colors.canvas,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: colors.line,
+                    padding: 7,
+                    marginBottom: 8,
+                    gap: 6,
+                  }}
+                >
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 6,
+                    }}
+                  >
+                    <Text
+                      style={{ flex: 1, fontSize: 10.5, fontWeight: "700", color: colors.text }}
+                      numberOfLines={1}
+                    >
+                      {item.name}
+                    </Text>
+                    <Pressable
+                      onPress={() => setHiddenItems((p) => ({ ...p, [item.name]: !p[item.name] }))}
+                      style={{
+                        paddingHorizontal: 7,
+                        paddingVertical: 2,
+                        borderRadius: 6,
+                        backgroundColor: colors.card,
+                      }}
+                    >
+                      <Text style={{ fontSize: 9.5, fontWeight: "600", color: colors.muted }}>
+                        {isHidden ? "Show" : "Hide"}
+                      </Text>
+                    </Pressable>
+                  </View>
+                  {!isHidden ? (
+                    <>
+                      {item.kind === "audio" ? (
+                        <audio
+                          src={mediaSrc(item.url)}
+                          controls
+                          style={{ width: "100%", height: 36 }}
+                        >
+                          <track kind="captions" />
+                        </audio>
+                      ) : item.kind === "video" ? (
+                        <video
+                          src={mediaSrc(item.url)}
+                          controls
+                          muted
+                          playsInline
+                          style={{
+                            width: "100%",
+                            maxHeight: 155,
+                            borderRadius: 7,
+                            backgroundColor: "#000",
+                          }}
+                        />
+                      ) : (
+                        <img
+                          src={mediaSrc(item.url)}
+                          alt={item.name}
+                          style={{
+                            width: "100%",
+                            height: "auto",
+                            display: "block",
+                            borderRadius: 7,
+                          }}
+                        />
+                      )}
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                        <Pressable
+                          onPress={() =>
+                            setExpandedPromptName((c) => (c === item.name ? "" : item.name))
+                          }
+                          style={{
+                            flex: 1,
+                            paddingVertical: 3,
+                            borderRadius: 6,
+                            backgroundColor: openP ? colors.blueDark : colors.card,
+                            alignItems: "center",
+                          }}
+                        >
+                          <Text
+                            style={{
+                              fontSize: 10,
+                              fontWeight: "600",
+                              color: openP ? "#FFFFFF" : item.prompt ? colors.blue : colors.muted,
+                            }}
+                          >
+                            Prompt
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => {
+                            setCopiedName(item.name);
+                            void navigator.clipboard?.writeText(item.name).catch(() => {});
+                          }}
+                          style={{
+                            flex: 1,
+                            paddingVertical: 3,
+                            borderRadius: 6,
+                            backgroundColor: colors.card,
+                            alignItems: "center",
+                          }}
+                        >
+                          <Text
+                            style={{
+                              fontSize: 10,
+                              fontWeight: "600",
+                              color: copiedName === item.name ? colors.green : colors.text,
+                            }}
+                          >
+                            {copiedName === item.name ? "Copied Filename" : "Copy Filename"}
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() =>
+                            window.open(mediaSrc(item.url), "_blank", "noopener,noreferrer")
+                          }
+                          style={{
+                            paddingHorizontal: 8,
+                            paddingVertical: 3,
+                            borderRadius: 6,
+                            backgroundColor: colors.card,
+                          }}
+                        >
+                          <Text style={{ fontSize: 10, fontWeight: "600", color: colors.text }}>
+                            ↗
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => {
+                            void fetch(
+                              `${API_URL}/api/media-file/${encodeURIComponent(item.name)}`,
+                              {
+                                method: "DELETE",
+                                headers: api.token ? { Authorization: `Bearer ${api.token}` } : {},
+                              },
+                            )
+                              .then(() => {
+                                setItems((p) => p.filter((x) => x.name !== item.name));
+                                refresh();
+                              })
+                              .catch(() => {});
+                          }}
+                          style={{
+                            paddingHorizontal: 8,
+                            paddingVertical: 3,
+                            borderRadius: 6,
+                            backgroundColor: colors.card,
+                          }}
+                        >
+                          <Text style={{ fontSize: 10, fontWeight: "700", color: colors.danger }}>
+                            Del
+                          </Text>
+                        </Pressable>
+                      </View>
+                      {openP ? (
+                        <View
+                          style={{
+                            padding: 7,
+                            borderRadius: 7,
+                            backgroundColor: colors.card,
+                            borderWidth: 1,
+                            borderColor: colors.line,
+                            gap: 4,
+                          }}
+                        >
+                          <Text style={{ fontSize: 10.5, lineHeight: 15, color: colors.text }}>
+                            {item.prompt || "No saved prompt for this file."}
+                          </Text>
+                          {item.prompt ? (
+                            <Pressable
+                              onPress={() => {
+                                setCopiedPromptId(item.name);
+                                void navigator.clipboard
+                                  ?.writeText(item.prompt || "")
+                                  .catch(() => {});
+                              }}
+                              style={{
+                                alignSelf: "flex-end",
+                                paddingHorizontal: 7,
+                                paddingVertical: 2,
+                                borderRadius: 5,
+                                backgroundColor: colors.canvas,
+                              }}
+                            >
+                              <Text
+                                style={{
+                                  fontSize: 9.5,
+                                  fontWeight: "700",
+                                  color: copiedPromptId === item.name ? colors.green : colors.blue,
+                                }}
+                              >
+                                {copiedPromptId === item.name ? "Copied ✓" : "Copy Prompt"}
+                              </Text>
+                            </Pressable>
+                          ) : null}
+                        </View>
+                      ) : null}
+                    </>
+                  ) : null}
+                </View>
+              );
+            })
+          )}
+        </ScrollView>
+      )}
       <button
         type="button"
         title="Drag to resize panel (double-click to reset)"
@@ -1469,6 +1782,15 @@ function WorkspaceShell({
   const [modelMode, setModelMode] = useState<"cloud" | "q4" | "q5">("cloud");
   const [modelBusy, setModelBusy] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [imageEngine, setImageEngine] = useState<"z_image_turbo" | "flux_dev">("z_image_turbo");
+  useEffect(() => {
+    void api
+      .request<{ settings?: Record<string, string | number | boolean> }>("/api/video-settings")
+      .then((res) => {
+        setImageEngine(res?.settings?.imageEngine === "flux_dev" ? "flux_dev" : "z_image_turbo");
+      })
+      .catch(() => {});
+  }, [api, videoSettingsOpen]);
   useEffect(() => {
     void api
       .request<{ mode?: "cloud" | "q4" | "q5" }>("/api/model-settings")
@@ -1478,7 +1800,13 @@ function WorkspaceShell({
         }
       })
       .catch(() => {});
-  }, [api]);
+    void api
+      .request<{ settings?: Record<string, string | number | boolean> }>("/api/video-settings")
+      .then((res) => {
+        setImageEngine(res?.settings?.imageEngine === "flux_dev" ? "flux_dev" : "z_image_turbo");
+      })
+      .catch(() => {});
+  }, [api, videoSettingsOpen]);
   async function selectModelMode(next: "cloud" | "q4" | "q5") {
     setModelMenuOpen(false);
     if (modelBusy || next === modelMode) return;
@@ -1505,7 +1833,18 @@ function WorkspaceShell({
     data?.tasks.find(
       (task) => task.status === "waiting_approval" || task.status === "waiting_input",
     ) || data?.tasks.find((task) => task.status === "running");
-  const agentName = data?.identity.name || "OpenMuse";
+  const memName = (data?.memories || [])
+    .map(
+      (m) =>
+        /(?:call(?:ed| yourself)?|name(?: is| to)?)\s+([A-Z][a-zA-Z0-9_-]{1,24})/i.exec(
+          JSON.stringify(m),
+        )?.[1],
+    )
+    .find(Boolean);
+  const agentName =
+    data?.identity.name && data.identity.name !== "OpenMuse"
+      ? data.identity.name
+      : memName || "OMS";
   const status = activeTask
     ? activeTask.status === "waiting_approval"
       ? `Ready to review · ${activeTask.title}`
@@ -1666,6 +2005,46 @@ function WorkspaceShell({
                   ))}
                 </View>
               )}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Switch Image Generation Model"
+                onPress={() => {
+                  const next = imageEngine === "flux_dev" ? "z_image_turbo" : "flux_dev";
+                  setImageEngine(next);
+                  void api
+                    .request(
+                      "/api/video-settings",
+                      next === "flux_dev"
+                        ? { imageEngine: "flux_dev", imageSteps: 28, imageCfg: 3.5 }
+                        : { imageEngine: "z_image_turbo", imageSteps: 8, imageCfg: 1.0 },
+                    )
+                    .catch(() => {});
+                }}
+                style={{
+                  marginTop: 6,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 6,
+                  paddingHorizontal: 10,
+                  height: 28,
+                  borderRadius: 14,
+                  backgroundColor: colors.card,
+                  borderWidth: 1,
+                  borderColor: imageEngine === "flux_dev" ? "#8B5CF6" : colors.line,
+                }}
+              >
+                <View
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: 3,
+                    backgroundColor: imageEngine === "flux_dev" ? "#A78BFA" : "#38BDF8",
+                  }}
+                />
+                <Text style={{ fontSize: 11, fontWeight: "600", color: colors.text }}>
+                  {imageEngine === "flux_dev" ? "FLUX.1-dev" : "Z-Image-Turbo"}
+                </Text>
+              </Pressable>
             </View>
             <View
               style={{ position: "absolute", left: "50%", marginLeft: 134, top: 17, zIndex: 10 }}

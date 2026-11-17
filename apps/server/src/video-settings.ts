@@ -148,8 +148,10 @@ const samplers = ["euler", "euler_ancestral", "dpmpp_2m", "res_multistep"].map((
   label: v,
 }));
 
-export const STUDIO_SCHEMA: Array<{ section: string; fields: FieldDef[] }> = [
+export type StudioTab = "video" | "image" | "audio" | "vision";
+export const STUDIO_SCHEMA: Array<{ tab: StudioTab; section: string; fields: FieldDef[] }> = [
   {
+    tab: "video",
     section: "1. Workflow Templates & Prompt Guardrails",
     fields: [
       {
@@ -196,12 +198,13 @@ export const STUDIO_SCHEMA: Array<{ section: string; fields: FieldDef[] }> = [
     ],
   },
   {
-    section: "2. Image-to-Video Character & Hat Lock",
+    tab: "video",
+    section: "2. Image Conditioning & Reference Fidelity",
     fields: [
       {
         key: "i2vBaseStrength",
         label: "Base Pass Image Lock",
-        hint: "Node 320:296 (0.92 locks faces/hats)",
+        hint: "Node 320:296 (0.85–0.95 locks subject & silhouette)",
         kind: "number",
         min: 0.5,
         max: 1,
@@ -225,6 +228,7 @@ export const STUDIO_SCHEMA: Array<{ section: string; fields: FieldDef[] }> = [
     ],
   },
   {
+    tab: "video",
     section: "3. Duration, Resolution & Multi-Clip Chaining",
     fields: [
       {
@@ -298,6 +302,7 @@ export const STUDIO_SCHEMA: Array<{ section: string; fields: FieldDef[] }> = [
     ],
   },
   {
+    tab: "video",
     section: "4. LTX-2.3 Sampler, LoRA & CFG",
     fields: [
       { key: "baseSampler", label: "Base Pass Sampler", kind: "choice", options: samplers },
@@ -326,12 +331,30 @@ export const STUDIO_SCHEMA: Array<{ section: string; fields: FieldDef[] }> = [
         min: 0,
         max: 1.5,
       },
+      {
+        key: "motionGuidance",
+        label: "Motion Scale",
+        hint: "0.7 = subtle, 1.3 = dynamic",
+        kind: "number",
+        min: 0.3,
+        max: 2.0,
+      },
+      { key: "audioEnabled", label: "Generate Native Video Audio Track", kind: "bool" },
+      {
+        key: "audioGuidance",
+        label: "Audio Sync Guidance",
+        hint: "Default 1.0",
+        kind: "number",
+        min: 0,
+        max: 3.0,
+      },
       { key: "loraName", label: "Distilled LoRA Filename", kind: "text" },
       { key: "baseSigmas", label: "Base Pass Sigmas", kind: "text" },
       { key: "upscaleSigmas", label: "Upscale Pass Sigmas", kind: "text" },
     ],
   },
   {
+    tab: "video",
     section: "5. Gemma-3 Expander, Seed & FFmpeg Output",
     fields: [
       { key: "fastMode", label: "Fast Mode (Bypass Gemma-3 2048-Token Expander)", kind: "bool" },
@@ -405,6 +428,124 @@ export const STUDIO_SCHEMA: Array<{ section: string; fields: FieldDef[] }> = [
       },
     ],
   },
+  {
+    tab: "image",
+    section: "1. Image Generation & Model Depth (Z-Image-Turbo / Studio)",
+    fields: [
+      {
+        key: "imageEngine",
+        label: "Active Image Pipeline",
+        kind: "choice",
+        options: [
+          { value: "z_image_turbo", label: "Z-Image-Turbo (Fast Local)" },
+          { value: "flux_dev", label: "FLUX.1-dev (High-Depth)" },
+          { value: "flux_kontext", label: "FLUX.1-Kontext-dev (Pixel-Locked Edit)" },
+        ],
+      },
+      {
+        key: "imageSteps",
+        label: "Denoising Steps",
+        hint: "8 for Turbo, 24–32 for Studio Depth",
+        kind: "number",
+        min: 4,
+        max: 50,
+      },
+      {
+        key: "imageCfg",
+        label: "Guidance Scale (CFG)",
+        hint: "1.0 for Turbo, 3.5 for FLUX",
+        kind: "number",
+        min: 1.0,
+        max: 10.0,
+      },
+      {
+        key: "imageDenoise",
+        label: "Edit / Restyle Denoise",
+        hint: "0.35 subtle, 0.75 strong restyle",
+        kind: "number",
+        min: 0.1,
+        max: 1.0,
+      },
+      {
+        key: "imageAutoEnhance",
+        label: "Auto-Expand Short Prompts (Cinematic Lighting & Lens)",
+        kind: "bool",
+      },
+      {
+        key: "imageNegativePrompt",
+        label: "Default Image Negative Prompt",
+        kind: "text",
+        multiline: true,
+      },
+    ],
+  },
+  {
+    tab: "audio",
+    section: "1. Qwen3-TTS Voice Cloning & FFmpeg Audio Muxing",
+    fields: [
+      {
+        key: "ttsLanguage",
+        label: "Default Voice Language",
+        kind: "choice",
+        options: ["Auto", "English", "Japanese", "Spanish", "French", "German"].map((v) => ({
+          value: v,
+          label: v,
+        })),
+      },
+      {
+        key: "ttsExpressiveness",
+        label: "Voice Expressiveness",
+        hint: "0.5 calm, 1.0 natural, 1.3 dramatic",
+        kind: "number",
+        min: 0.2,
+        max: 1.5,
+      },
+      {
+        key: "audioMixVoiceGain",
+        label: "Voiceover Mix Gain",
+        hint: "Default 1.0",
+        kind: "number",
+        min: 0.2,
+        max: 2.0,
+      },
+      {
+        key: "audioMixBgGain",
+        label: "Background Audio Gain",
+        hint: "0.25 ducks music under voice",
+        kind: "number",
+        min: 0.0,
+        max: 1.5,
+      },
+    ],
+  },
+  {
+    tab: "vision",
+    section: "1. Qwen2.5-VL Inspection & Poisson Feature Cloning",
+    fields: [
+      {
+        key: "visionAutoUnload",
+        label: "Auto-Free VRAM Immediately After Vision Inspection",
+        kind: "bool",
+      },
+      {
+        key: "cloneBlendMode",
+        label: "Poisson Seamless Clone Mode",
+        kind: "choice",
+        options: [
+          { value: "normal", label: "Normal Clone (Preserve Texture)" },
+          { value: "mixed", label: "Mixed Clone (Blend Lighting)" },
+        ],
+      },
+      {
+        key: "cloneFeatherPx",
+        label: "Mask Edge Feather (px)",
+        hint: "0–32 px soft transition",
+        kind: "number",
+        min: 0,
+        max: 32,
+      },
+    ],
+  },
 ];
 
 export type VideoSettings = Record<string, string | number | boolean>;
@@ -447,6 +588,24 @@ export const DEFAULT_VIDEO_SETTINGS: VideoSettings = {
   fixedSeed: 42,
   outputCodec: "libx264",
   outputCrf: 18,
+  motionGuidance: 1.0,
+  audioEnabled: true,
+  audioGuidance: 1.0,
+  imageEngine: "flux_dev",
+  editEngine: "flux_kontext",
+  imageSteps: 8,
+  imageCfg: 1.0,
+  imageDenoise: 0.3,
+  imageAutoEnhance: true,
+  imageNegativePrompt: "blurry, lowres, plastic skin, deformed hands, watermark, text",
+  ttsLanguage: "Auto",
+  ttsExpressiveness: 1.0,
+  audioMixVoiceGain: 1.0,
+  audioMixBgGain: 0.25,
+  visionAutoUnload: true,
+  cloneBlendMode: "normal",
+  cloneFeatherPx: 8,
+  customModelDirs: "/mnt/a/AI_Models",
 };
 
 const SETTINGS_PATH = resolve(process.cwd(), "video-defaults.json");
@@ -464,6 +623,231 @@ export async function writeVideoSettings(patch: Partial<VideoSettings>): Promise
     Object.entries(patch).filter(([, val]) => val !== undefined),
   ) as VideoSettings;
   const next: VideoSettings = { ...(await readVideoSettings()), ...clean };
-  await writeFile(SETTINGS_PATH, JSON.stringify(next, null, 2), "utf8");
+  await writeFile(SETTINGS_PATH, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  if (typeof next.customModelDirs === "string") await syncCustomModelSymlinks(next.customModelDirs);
   return next;
+}
+
+export interface ComponentCategoryScan {
+  id: string;
+  label: string;
+  settingKey: string;
+  dirs: string[];
+  installNote: string;
+  files: string[];
+}
+
+const COMFY_MODELS_ROOT = "/home/cowboy/ComfyUI/models";
+
+const COMPONENT_DEFS: Array<{
+  id: string;
+  label: string;
+  settingKey: string;
+  dirs: string[];
+  installNote: string;
+}> = [
+  {
+    id: "text_encoders",
+    label: "Text Encoders (CLIP / T5 / Other)",
+    settingKey: "activeTextEncoder",
+    dirs: ["text_encoders", "clip", "clip_projections"],
+    installNote:
+      "Place .safetensors or .gguf CLIP/T5 encoders in ~/ComfyUI/models/text_encoders/ or ~/ComfyUI/models/clip/ (from Hugging Face Comfy-Org or Kijai repos).",
+  },
+  {
+    id: "vae",
+    label: "VAE (Variational Autoencoders)",
+    settingKey: "activeVae",
+    dirs: ["vae", "vae_approx"],
+    installNote:
+      "Place .safetensors VAE files (e.g. ae.safetensors, sdxl_vae.safetensors) in ~/ComfyUI/models/vae/.",
+  },
+  {
+    id: "loras",
+    label: "LoRA Adapters",
+    settingKey: "activeImageLora",
+    dirs: ["loras"],
+    installNote:
+      "Place .safetensors LoRA weights in ~/ComfyUI/models/loras/ (available from Civitai or Hugging Face).",
+  },
+  {
+    id: "controlnet",
+    label: "ControlNet / Control Adapters",
+    settingKey: "activeControlNet",
+    dirs: ["controlnet", "model_patches", "gligen"],
+    installNote:
+      "None found. Place ControlNet / Union / Depth / Canny .safetensors models in ~/ComfyUI/models/controlnet/ (from Hugging Face InstantX, Shakker-Labs, or lllyasviel).",
+  },
+  {
+    id: "ipadapter",
+    label: "IP-Adapter / Image Encoders (CLIP Vision)",
+    settingKey: "activeIpAdapter",
+    dirs: ["ipadapter", "clip_vision", "style_models", "photomaker"],
+    installNote:
+      "None found. Place IP-Adapter .safetensors/.bin files in ~/ComfyUI/models/ipadapter/ and CLIP-Vision encoders in ~/ComfyUI/models/clip_vision/.",
+  },
+  {
+    id: "embeddings",
+    label: "Textual Inversion Embeddings",
+    settingKey: "activeEmbedding",
+    dirs: ["embeddings", "hypernetworks"],
+    installNote:
+      "None found. Place .safetensors or .pt embedding tokens in ~/ComfyUI/models/embeddings/.",
+  },
+  {
+    id: "upscalers",
+    label: "Upscalers (Pixel & Latent)",
+    settingKey: "activeUpscaler",
+    dirs: ["upscale_models", "latent_upscale_models"],
+    installNote:
+      "Place ESRGAN / RealESRGAN / SwinIR .pth or .safetensors models in ~/ComfyUI/models/upscale_models/ (or latent upscalers in latent_upscale_models/).",
+  },
+  {
+    id: "video_motion",
+    label: "Video / Motion & Diffusion Checkpoints",
+    settingKey: "activeVideoComponent",
+    dirs: [
+      "diffusion_models",
+      "checkpoints",
+      "unet",
+      "frame_interpolation",
+      "optical_flow",
+      "audio_encoders",
+    ],
+    installNote:
+      "Place LTX / Wan / Hunyuan / FLUX .safetensors checkpoints in ~/ComfyUI/models/diffusion_models/ or checkpoints/.",
+  },
+];
+
+async function walkModelFiles(
+  dirPath: string,
+  prefix = "",
+  visited = new Set<string>(),
+  depth = 0,
+): Promise<string[]> {
+  if (depth > 4) return [];
+  const { readdir, realpath } = await import("node:fs/promises");
+  const out: string[] = [];
+  try {
+    const real = await realpath(dirPath);
+    if (visited.has(real)) return [];
+    visited.add(real);
+    const entries = await readdir(dirPath, { withFileTypes: true });
+    for (const ent of entries) {
+      if (ent.name.startsWith(".")) continue;
+      const rel = prefix ? `${prefix}/${ent.name}` : ent.name;
+      const full = resolve(dirPath, ent.name);
+      if (ent.isDirectory() || ent.isSymbolicLink()) {
+        out.push(...(await walkModelFiles(full, rel, visited, depth + 1)));
+      } else if (/\.(safetensors|ckpt|pt|pth|bin|gguf)$/i.test(ent.name)) {
+        out.push(rel);
+      }
+    }
+  } catch {}
+  return out;
+}
+
+export async function scanComfyInventory(): Promise<ComponentCategoryScan[]> {
+  const curCfg = await readVideoSettings();
+  await syncCustomModelSymlinks(String(curCfg.customModelDirs ?? "/mnt/a/AI_Models"));
+  const results: ComponentCategoryScan[] = [];
+  for (const def of COMPONENT_DEFS) {
+    const found = new Set<string>();
+    for (const sub of def.dirs) {
+      const files = await walkModelFiles(resolve(COMFY_MODELS_ROOT, sub));
+      for (const f of files) found.add(f);
+    }
+    results.push({
+      ...def,
+      files: [...found].sort((a, b) => a.localeCompare(b)),
+    });
+  }
+  return results;
+}
+
+export async function verifyComfyInventory(autoSync = false) {
+  const inventory = await scanComfyInventory();
+  const cfg = await readVideoSettings();
+  const issues: string[] = [];
+  const patch: Record<string, string> = {};
+  for (const cat of inventory) {
+    const cur = typeof cfg[cat.settingKey] === "string" ? String(cfg[cat.settingKey]) : "";
+    if (cur && cur !== "none" && !cat.files.includes(cur)) {
+      issues.push(`${cat.label}: selected "${cur}" was not found on disk.`);
+      if (autoSync) patch[cat.settingKey] = cat.files.at(0) || "none";
+    }
+    if (
+      cat.id === "loras" &&
+      typeof cfg.loraName === "string" &&
+      cfg.loraName &&
+      !cat.files.includes(cfg.loraName)
+    ) {
+      issues.push(`Video LoRA: "${cfg.loraName}" not found in ~/ComfyUI/models/loras/.`);
+    }
+  }
+  const updatedSettings =
+    autoSync && Object.keys(patch).length > 0 ? await writeVideoSettings(patch) : cfg;
+  return {
+    ok: issues.length === 0,
+    checkedAt: new Date().toISOString(),
+    totalFiles: inventory.reduce((acc, c) => acc + c.files.length, 0),
+    issues,
+    inventory,
+    settings: updatedSettings,
+  };
+}
+
+export function normalizeModelRoot(raw: string): string {
+  const t = raw.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+  const win = /^([a-zA-Z]):\/(.*)$/.exec(t);
+  return win ? `/mnt/${win.at(1)?.toLowerCase()}/${win.at(2) ?? ""}` : t;
+}
+
+export async function syncCustomModelSymlinks(rawDirs: string): Promise<string[]> {
+  const { mkdir, symlink, lstat, unlink, realpath } = await import("node:fs/promises");
+  const { existsSync } = await import("node:fs");
+  const comfyBase = "/home/cowboy/ComfyUI/models";
+  const subdirs = [
+    "loras",
+    "checkpoints",
+    "diffusion_models",
+    "unet",
+    "text_encoders",
+    "clip",
+    "vae",
+    "controlnet",
+    "ipadapter",
+    "clip_vision",
+    "embeddings",
+    "upscale_models",
+  ];
+  const roots = rawDirs
+    .split(/[\n,;]+/)
+    .map(normalizeModelRoot)
+    .filter(Boolean);
+  const linked: string[] = [];
+  for (let i = 0; i < roots.length; i++) {
+    const root = roots[i];
+    if (!existsSync(root)) continue;
+    for (const sub of subdirs) {
+      const src = `${root}/${sub}`;
+      if (!existsSync(src)) continue;
+      const dstDir = `${comfyBase}/${sub}`;
+      await mkdir(dstDir, { recursive: true });
+      try {
+        if ((await realpath(src)) === (await realpath(dstDir))) continue;
+      } catch {}
+      const linkPath = `${dstDir}/custom_${i}`;
+      await mkdir(dstDir, { recursive: true });
+      try {
+        const st = await lstat(linkPath);
+        if (st.isSymbolicLink()) await unlink(linkPath);
+      } catch {}
+      try {
+        await symlink(src, linkPath, "dir");
+        linked.push(linkPath);
+      } catch {}
+    }
+  }
+  return linked;
 }

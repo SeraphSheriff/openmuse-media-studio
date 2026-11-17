@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { access, copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { extname, join, resolve } from "node:path";
+import { basename, extname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { readVideoSettings, type VideoSettings, WORKFLOW_TEMPLATES } from "./video-settings.js";
 
@@ -224,8 +225,16 @@ async function renderSegment(
     }
     await copyFile(srcPath, join(COMFY_INPUT_DIR, inputName));
   }
+  const exactLock = Boolean(inputName) && /\b(exact|same|preserve|keep|identical)\b/i.test(prompt);
   const vals: Record<string, unknown> = {
     ...cfg,
+    ...(exactLock
+      ? {
+          i2vBaseStrength: Math.max(Number(cfg.i2vBaseStrength) || 0.92, 0.97),
+          i2vUpscaleStrength: Math.max(Number(cfg.i2vUpscaleStrength) || 0.75, 0.88),
+          i2vImgCompression: 0,
+        }
+      : {}),
     image: inputName,
     prompt,
     width,
@@ -260,7 +269,12 @@ export async function renderLocalVideo(
   const chunkMax = Math.max(4, Math.min(10, Number(cfg.maxChunkSeconds)));
   const numChunks = Math.max(1, Math.ceil(dur / chunkMax));
   const segments: string[] = [];
-  let nextImage = initialImagePath;
+  let nextImage =
+    initialImagePath &&
+    !existsSync(initialImagePath) &&
+    existsSync(join(process.cwd(), "generated", basename(initialImagePath)))
+      ? join(process.cwd(), "generated", basename(initialImagePath))
+      : initialImagePath;
 
   setProg({
     active: true,

@@ -724,8 +724,11 @@ export class AgentService {
     return this.db.get<Idea>(owner, "ideas", id);
   }
   async notify(owner: string, title: string, body: string, taskId?: string, key?: string) {
+    const id = key ? hash(key) : randomUUID();
+    if (await this.db.get(owner, "dismissed-notifications", id)) return;
+    if (taskId && (await this.db.get(owner, "dismissed-notifications", `task:${taskId}`))) return;
     const value: AgentNotification = {
-      id: key ? hash(key) : randomUUID(),
+      id,
       taskId,
       title,
       body,

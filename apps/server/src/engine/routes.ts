@@ -159,7 +159,14 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
     return c.json(notification);
   });
   app.post("/notifications/:id/delete", async (c) => {
-    await service.db.remove(c.get("owner"), "notifications", c.req.param("id"));
+    const owner = c.get("owner");
+    const id = c.req.param("id");
+    const existing = await service.db.get<AgentNotification>(owner, "notifications", id);
+    await service.db.remove(owner, "notifications", id);
+    await service.db.put(owner, "dismissed-notifications", { id });
+    if (existing?.taskId) {
+      await service.db.put(owner, "dismissed-notifications", { id: `task:${existing.taskId}` });
+    }
     return c.json({ ok: true });
   });
   app.post("/notifications/clear", async (c) => {
@@ -167,6 +174,10 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
     const items = await service.db.list<AgentNotification>(owner, "notifications");
     for (const item of items) {
       await service.db.remove(owner, "notifications", item.id);
+      await service.db.put(owner, "dismissed-notifications", { id: item.id });
+      if (item.taskId) {
+        await service.db.put(owner, "dismissed-notifications", { id: `task:${item.taskId}` });
+      }
     }
     return c.json({ ok: true, deleted: items.length });
   });
