@@ -1,5 +1,30 @@
 # OpenMuse Media Studio (OMS)
 
-**OpenMuse Media Studio** is a local-first AI media production workstation featuring a 3-column studio layout, local LLM and ComfyUI integration, image/video generation and editing tools, voice cloning, and model directory management.
+**OpenMuse Media Studio (OMS)** is a local-first AI media production workstation featuring a 3-column studio UI, multi-engine ComfyUI image/video pipelines, offline vision grounding, and live filesystem inventory management.
 
-For a complete breakdown of the 3-column UI layout, AI tools matrix, quality presets, ComfyUI model directories, and quick-start instructions, please refer to the source documentation or repository files.
+---
+
+## Overview
+
+OpenMuse Media Studio provides a comprehensive suite of local AI tools, including a symmetric 3-column workstation layout (ComfyUI control/console, chat/studio controls, media/history), an AI media/vision/audio tools matrix, configurable quality presets (`Draft` and `Cinema Quality`), ComfyUI model directory auto-symlinking, and streamlined shell scripts for setup, execution, and teardown.
+
+---
+
+## Quick Start
+
+1. **Install dependencies & generate local keys:**
+   ```bash
+   pnpm install && ./generateOpenmuseKeys
+   ```
+2. **Configure environment:** Copy `.env.example` to `.env` and set your local `llama.cpp`, `ComfyUI`, and optional cloud API keys.
+3. **Start OpenMuse Media Studio + ComfyUI:**
+   ```bash
+   ./start-studio
+   ```
+   - **OpenMuse Studio UI:** `http://localhost:8081`
+   - **OpenMuse API Server:** `http://localhost:8787`
+   - **ComfyUI Backend:** `http://localhost:8188`
+4. **Stop all services & free GPU VRAM:**
+   ```bash
+   ./stop-studio
+   ```
