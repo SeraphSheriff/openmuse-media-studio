@@ -2,10 +2,11 @@ import { getVideoProgress } from "./comfy-video.ts";
 import { ensureLocalModelReady, readModelSettings, writeModelSettings } from "./model-settings.ts";
 import { cleanupPromptHistory, deletePromptHistory, readPromptHistory } from "./prompt-history.ts";
 import {
-  DEFAULT_VIDEO_SETTINGS,
   detectSettingConflicts,
   readVideoSettings,
+  resetVideoSettings,
   STUDIO_SCHEMA,
+  saveUserVideoDefaults,
   scanComfyInventory,
   verifyComfyInventory,
   writeVideoSettings,
@@ -788,9 +789,15 @@ export async function createApp(
   app.post("/api/video-settings", async (c) =>
     c.json({ settings: await writeVideoSettings(await c.req.json()), schema: STUDIO_SCHEMA }),
   );
-  app.post("/api/video-settings/reset", async (c) =>
-    c.json({ settings: await writeVideoSettings(DEFAULT_VIDEO_SETTINGS), schema: STUDIO_SCHEMA }),
-  );
+  app.post("/api/video-settings/save-defaults", async (c) => {
+    const settings = await saveUserVideoDefaults(await c.req.json());
+    return c.json({ settings, schema: STUDIO_SCHEMA });
+  });
+  app.post("/api/video-settings/reset", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { factory?: boolean };
+    const { settings, source } = await resetVideoSettings(Boolean(body?.factory));
+    return c.json({ settings, schema: STUDIO_SCHEMA, resetSource: source });
+  });
   app.get("/api/comfy-inventory", async (c) => {
     const inventory = await scanComfyInventory();
     const settings = await readVideoSettings();

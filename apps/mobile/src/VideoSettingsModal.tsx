@@ -68,6 +68,7 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
   const [activeTab, setActiveTab] = useState<StudioTab>("video");
   const [inventory, setInventory] = useState<InventoryPayload | null>(null);
   const [verifying, setVerifying] = useState(false);
+  const [verifyNote, setVerifyNote] = useState<string | null>(null);
   const [families, setFamilies] = useState<Record<string, string>>({});
   const [conflicts, setConflicts] = useState<SettingConflict[]>([]);
   const validateDraft = async (nextSettings: Record<string, string | number | boolean>) => {
@@ -114,13 +115,21 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
       if (groups) setInventory({ groups, mismatches: issues, families: fams, conflicts: confs });
       if (verify) {
         const fresh = await api.request<StudioPayload>("/api/video-settings");
-        if (fresh) setData(fresh);
-        const mm = issues;
-        notify(
-          mm?.length
-            ? `Synced ${mm.length} missing model reference(s) with disk`
-            : "Filesystem verified: all selections match disk",
-        );
+        if (fresh) {
+          setData(fresh);
+          if (fresh.settings) setInitialSettings(fresh.settings);
+        }
+        const total = (groups ?? []).reduce((a, g) => a + g.files.length, 0);
+        const t = new Date().toLocaleTimeString([], {
+          hour: "numeric",
+          minute: "2-digit",
+          second: "2-digit",
+        });
+        const msg = issues?.length
+          ? `Synced ${issues.length} issue(s) across ${total} files (${t})`
+          : `Verified ${total} model files on disk — all selections valid (${t})`;
+        setVerifyNote(msg);
+        notify(msg);
       }
     } catch (e) {
       notify(e instanceof Error ? e.message : "Could not scan ComfyUI models");
@@ -233,15 +242,40 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const reset = async () => {
+  const saveAsDefaults = async () => {
+    if (!data) return;
     setSaving(true);
     try {
-      const resetRes = await api.request<StudioPayload>("/api/video-settings/reset", {});
+      const saved = await api.request<StudioPayload>(
+        "/api/video-settings/save-defaults",
+        data.settings,
+      );
+      setData(saved);
+      if (saved?.settings) setInitialSettings(saved.settings);
+      setConfirmDiscard(false);
+      setVerifyNote("Saved current settings as your personal defaults.");
+      notify("Saved current settings as your personal defaults.");
+    } finally {
+      setSaving(false);
+    }
+  };
+  const reset = async (factory = false) => {
+    setSaving(true);
+    try {
+      const resetRes = await api.request<StudioPayload & { resetSource?: "user" | "factory" }>(
+        "/api/video-settings/reset",
+        { factory },
+      );
       setData(resetRes);
       if (resetRes?.settings) setInitialSettings(resetRes.settings);
       setNumDrafts({});
       setConfirmDiscard(false);
-      notify("Reset to recommended RTX 3090 defaults.");
+      const msg =
+        resetRes?.resetSource === "user"
+          ? "Restored your saved personal defaults."
+          : "Reset to clean factory defaults.";
+      setVerifyNote(msg);
+      notify(msg);
     } finally {
       setSaving(false);
     }
@@ -692,6 +726,18 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
                       </Text>
                     </Pressable>
                   </View>
+                  {verifyNote && (
+                    <Text
+                      style={{
+                        fontSize: 11.5,
+                        fontWeight: "600",
+                        color: "#6EE7B7",
+                        paddingHorizontal: 4,
+                      }}
+                    >
+                      ✓ {verifyNote}
+                    </Text>
+                  )}
                   <View
                     style={{
                       padding: 12,
@@ -951,15 +997,38 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
               </View>
             </View>
           )}
-          <View style={[s.row, { justifyContent: "space-between", marginTop: 12, gap: 8 }]}>
-            <Button small onPress={() => void reset()} disabled={saving}>
-              <View style={[s.row, { gap: 5 }]}>
-                <RotateCcw size={14} color={colors.text} />
-                <Text style={{ fontSize: 12, fontWeight: "600", color: colors.text }}>
-                  Reset Defaults
+          <View
+            style={[
+              s.row,
+              { justifyContent: "space-between", marginTop: 12, gap: 8, flexWrap: "wrap" },
+            ]}
+          >
+            <View style={[s.row, { gap: 6 }]}>
+              <Button small onPress={() => void reset(false)} disabled={saving}>
+                <View style={[s.row, { gap: 5 }]}>
+                  <RotateCcw size={14} color={colors.text} />
+                  <Text style={{ fontSize: 12, fontWeight: "600", color: colors.text }}>
+                    Reset Defaults
+                  </Text>
+                </View>
+              </Button>
+              <Button small onPress={() => void saveAsDefaults()} disabled={saving || !data}>
+                <Text style={{ fontSize: 11.5, fontWeight: "600", color: colors.text }}>
+                  Save as My Defaults
                 </Text>
-              </View>
-            </Button>
+              </Button>
+              <Pressable
+                onPress={() => void reset(true)}
+                disabled={saving}
+                style={{ paddingHorizontal: 6 }}
+              >
+                <Text
+                  style={{ fontSize: 11, color: colors.muted, textDecorationLine: "underline" }}
+                >
+                  Factory
+                </Text>
+              </Pressable>
+            </View>
             <View style={[s.row, { gap: 10 }]}>
               {dirty && (
                 <Text style={{ fontSize: 11.5, fontWeight: "700", color: "#FBBF24" }}>

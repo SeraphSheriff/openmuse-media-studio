@@ -605,10 +605,33 @@ export const DEFAULT_VIDEO_SETTINGS: VideoSettings = {
   visionAutoUnload: true,
   cloneBlendMode: "normal",
   cloneFeatherPx: 8,
-  customModelDirs: "/mnt/a/AI_Models",
+  customModelDirs: "",
 };
 
 const SETTINGS_PATH = resolve(process.cwd(), "video-defaults.json");
+const USER_DEFAULTS_PATH = resolve(process.cwd(), "user-video-defaults.json");
+
+export async function saveUserVideoDefaults(settings: VideoSettings): Promise<VideoSettings> {
+  const saved = await writeVideoSettings(settings);
+  await writeFile(USER_DEFAULTS_PATH, `${JSON.stringify(saved, null, 2)}\n`, "utf8");
+  return saved;
+}
+
+export async function resetVideoSettings(factory = false): Promise<{
+  settings: VideoSettings;
+  source: "user" | "factory";
+}> {
+  if (!factory) {
+    try {
+      const userRaw = JSON.parse(await readFile(USER_DEFAULTS_PATH, "utf8")) as VideoSettings;
+      return {
+        settings: await writeVideoSettings({ ...DEFAULT_VIDEO_SETTINGS, ...userRaw }),
+        source: "user",
+      };
+    } catch {}
+  }
+  return { settings: await writeVideoSettings(DEFAULT_VIDEO_SETTINGS), source: "factory" };
+}
 
 export async function readVideoSettings(): Promise<VideoSettings> {
   try {
