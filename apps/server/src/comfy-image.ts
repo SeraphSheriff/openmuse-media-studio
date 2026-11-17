@@ -1,6 +1,8 @@
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { basename } from "node:path";
-import { readVideoSettings } from "./video-settings.js";
+import { homedir } from "node:os";
+import { basename, resolve } from "node:path";
+import { detectModelFamily, readVideoSettings } from "./video-settings.js";
 
 const COMFY_URL = process.env.COMFYUI_URL?.trim() || "http://127.0.0.1:8188";
 
@@ -71,6 +73,25 @@ async function runGraphAndFetchPng(graph: Record<string, unknown>): Promise<Uint
   throw new Error("Timed out waiting for ComfyUI image output");
 }
 
+async function resolveCompatibleImageLora(
+  cfg: Record<string, unknown>,
+  engine: string,
+): Promise<{ loraName: string; loraStrength: number } | undefined> {
+  const raw = typeof cfg.loraName === "string" ? cfg.loraName.trim() : "";
+  if (!raw) return undefined;
+  const abs = resolve(homedir(), "ComfyUI", "models", "loras", raw);
+  if (!existsSync(abs)) return undefined;
+  const fam = await detectModelFamily(abs, raw);
+  const isFlux = engine === "flux_dev" || engine === "flux_kontext";
+  if (isFlux && fam !== "FLUX" && fam !== "Universal") return undefined;
+  if (!isFlux && fam !== "Z-Image" && fam !== "Universal") return undefined;
+  const str = Number(cfg.loraStrength);
+  return {
+    loraName: raw,
+    loraStrength: Number.isFinite(str) && str > 0 ? Math.min(2, str) : 0.75,
+  };
+}
+
 function buildImageGraph(opts: {
   engine: string;
   prompt: string;
@@ -82,6 +103,7 @@ function buildImageGraph(opts: {
   denoise: number;
   uploadedImage?: string;
   uploadedMask?: string;
+  lora?: { loraName: string; loraStrength: number };
 }): Record<string, unknown> {
   const seed = Math.floor(Math.random() * 1_000_000_000);
   if (opts.engine === "flux_kontext" && opts.uploadedImage) {
@@ -172,6 +194,8 @@ function buildImageGraph(opts: {
     };
   }
   if (opts.engine === "flux_dev") {
+    const modelRef = opts.lora ? ["20", 0] : ["1", 0];
+    const clipRef = opts.lora ? ["20", 1] : ["2", 0];
     return {
       "1": {
         class_type: "UNETLoader",
@@ -186,13 +210,27 @@ function buildImageGraph(opts: {
           device: "default",
         },
       },
+      ...(opts.lora
+        ? {
+            "20": {
+              class_type: "LoraLoader",
+              inputs: {
+                model: ["1", 0],
+                clip: ["2", 0],
+                lora_name: opts.lora.loraName,
+                strength_model: opts.lora.loraStrength,
+                strength_clip: opts.lora.loraStrength,
+              },
+            },
+          }
+        : {}),
       "3": { class_type: "VAELoader", inputs: { vae_name: "ae.safetensors" } },
-      "4": { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: opts.prompt } },
+      "4": { class_type: "CLIPTextEncode", inputs: { clip: clipRef, text: opts.prompt } },
       "5": {
         class_type: "FluxGuidance",
         inputs: { conditioning: ["4", 0], guidance: Math.max(1.5, opts.cfgScale) },
       },
-      "6": { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: opts.negPrompt } },
+      "6": { class_type: "CLIPTextEncode", inputs: { clip: clipRef, text: opts.negPrompt } },
       ...(opts.uploadedImage
         ? {
             "7": { class_type: "LoadImage", inputs: { image: opts.uploadedImage } },
@@ -221,7 +259,7 @@ function buildImageGraph(opts: {
       "8": {
         class_type: "KSampler",
         inputs: {
-          model: ["1", 0],
+          model: modelRef,
           positive: ["5", 0],
           negative: ["6", 0],
           latent_image: ["11", 0],
@@ -250,9 +288,32 @@ function buildImageGraph(opts: {
       inputs: { clip_name: "qwen_3_4b.safetensors", type: "lumina2", device: "default" },
     },
     "3": { class_type: "VAELoader", inputs: { vae_name: "ae.safetensors" } },
-    "4": { class_type: "ModelSamplingAuraFlow", inputs: { model: ["1", 0], shift: 3.0 } },
-    "5": { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: opts.prompt } },
-    "6": { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: opts.negPrompt } },
+    ...(opts.lora
+      ? {
+          "20": {
+            class_type: "LoraLoader",
+            inputs: {
+              model: ["1", 0],
+              clip: ["2", 0],
+              lora_name: opts.lora.loraName,
+              strength_model: opts.lora.loraStrength,
+              strength_clip: opts.lora.loraStrength,
+            },
+          },
+        }
+      : {}),
+    "4": {
+      class_type: "ModelSamplingAuraFlow",
+      inputs: { model: opts.lora ? ["20", 0] : ["1", 0], shift: 3.0 },
+    },
+    "5": {
+      class_type: "CLIPTextEncode",
+      inputs: { clip: opts.lora ? ["20", 1] : ["2", 0], text: opts.prompt },
+    },
+    "6": {
+      class_type: "CLIPTextEncode",
+      inputs: { clip: opts.lora ? ["20", 1] : ["2", 0], text: opts.negPrompt },
+    },
     ...(opts.uploadedImage
       ? {
           "7": { class_type: "LoadImage", inputs: { image: opts.uploadedImage } },
@@ -305,22 +366,34 @@ function buildImageGraph(opts: {
   };
 }
 
-export async function renderLocalZImage(prompt: string, aspectRatio: string): Promise<Uint8Array> {
+export async function renderLocalZImage(
+  prompt: string,
+  aspectRatio: string,
+  extraNegPrompt?: string,
+): Promise<Uint8Array> {
   const cfg = await readVideoSettings();
   const { width, height } = dimensionsFor(aspectRatio);
+  const engine =
+    String(cfg.imageEngine || "z_image_turbo") === "flux_kontext"
+      ? "flux_dev"
+      : String(cfg.imageEngine || "z_image_turbo");
+  const lora = await resolveCompatibleImageLora(cfg, engine);
   return runGraphAndFetchPng(
     buildImageGraph({
-      engine:
-        String(cfg.imageEngine || "z_image_turbo") === "flux_kontext"
-          ? "flux_dev"
-          : String(cfg.imageEngine || "z_image_turbo"),
+      engine,
       prompt,
-      negPrompt: typeof cfg.imageNegativePrompt === "string" ? cfg.imageNegativePrompt : "",
+      negPrompt: [
+        typeof cfg.imageNegativePrompt === "string" ? cfg.imageNegativePrompt.trim() : "",
+        extraNegPrompt?.trim() || "",
+      ]
+        .filter(Boolean)
+        .join(", "),
       width,
       height,
       steps: Number(cfg.imageSteps) || 8,
       cfgScale: Number(cfg.imageCfg) || 1.0,
       denoise: 1.0,
+      lora,
     }),
   );
 }
@@ -339,6 +412,7 @@ export async function editLocalZImage(
     wantExact || cfg.imageEngine === "flux_kontext" || cfg.editEngine === "flux_kontext"
       ? "flux_kontext"
       : String(cfg.imageEngine || "z_image_turbo");
+  const lora = await resolveCompatibleImageLora(cfg, editEngine);
   return runGraphAndFetchPng(
     buildImageGraph({
       engine: editEngine,
@@ -356,6 +430,7 @@ export async function editLocalZImage(
             : Number(cfg.imageDenoise) || 0.3,
       uploadedImage: uploaded,
       uploadedMask,
+      lora,
     }),
   );
 }

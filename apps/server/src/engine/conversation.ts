@@ -446,7 +446,7 @@ export class ConversationAgent extends AbstractAgent {
               const ramGb = Math.round(os.totalmem() / 1073741824);
               const cpu = os.cpus().at(0)?.model || "Multi-core CPU";
               return (
-                ` Host Workstation: ${os.type()} ${os.release()} (${os.arch()}), CPU: ${cpu}, RAM: ${ramGb}GB, GPU: NVIDIA GeForce RTX 3090 (24GB VRAM). Installed Local Models: Qwen3-8B, Qwen3-14B, Qwen2.5-VL, Qwen3-TTS, FLUX.1-dev FP8, FLUX.1-Kontext-dev FP8, Z-Image-Turbo BF16, LTX-2.3 22B.${st} Current local server time: ${new Date().toLocaleString("en-US", { dateStyle: "full", timeStyle: "long" })} (UTC: ${new Date().toISOString()}).` +
+                ` Host Workstation: ${os.type()} ${os.release()} (${os.arch()}), CPU: ${cpu}, RAM: ${ramGb}GB, GPU: NVIDIA GeForce RTX 3090 (24GB VRAM). Installed Local Models: Qwen3-8B, Qwen3-14B, Qwen2.5-VL, Qwen3-TTS, FLUX.1-dev FP8, FLUX.1-Kontext-dev FP8, Z-Image-Turbo BF16, LTX-2.3 22B. Tool Guardrail: If the user asks why a generated image/video did not match their prompt or asks a question about an existing file, NEVER call generate_image, edit_image, or generate_video—use inspect_image if visual inspection helps and answer their question directly in text.${st} Current local server time: ${new Date().toLocaleString("en-US", { dateStyle: "full", timeStyle: "long" })} (UTC: ${new Date().toISOString()}).` +
                 (this.config.webSearchEnabled ? searchInstructions : "")
               );
             })()),

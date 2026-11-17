@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { defineTool } from "@copilotkit/runtime/v2";
@@ -30,8 +30,93 @@ function googleBase(): string {
   return ["https://", "generativelanguage", ".googleapis", ".com/v1beta"].join("");
 }
 
-function pollinationsImageBase(): string {
-  return ["https://", "image", ".pollinations", ".ai/prompt"].join("");
+const sceneSpecSchema = z.object({
+  subject: z
+    .string()
+    .min(1)
+    .describe("Core subject identity, age/build, hair, skin, and expression"),
+  attireState: z
+    .string()
+    .min(1)
+    .describe(
+      "Exact clothing or nudity state (e.g., completely nude, unclothed, bare skin, no underwear vs specific garments)",
+    ),
+  poseAndAction: z
+    .string()
+    .min(1)
+    .describe("Exact body orientation, limb placement, posture, and action"),
+  cameraAndFraming: z
+    .string()
+    .default("medium full shot, natural perspective")
+    .describe("Shot distance, camera angle, lens, and depth of field"),
+  environmentAndLighting: z
+    .string()
+    .default("natural indoor lighting")
+    .describe("Background setting, atmosphere, and key/rim lighting"),
+  styleAndMedium: z
+    .string()
+    .default("photorealistic 35mm candid photograph, natural skin texture")
+    .describe("Visual medium and rendering style"),
+  mustAvoid: z
+    .array(z.string())
+    .default([])
+    .describe("Explicit visual elements, garments, or artifacts to exclude"),
+});
+
+function compileSceneSpec(
+  spec: z.infer<typeof sceneSpecSchema> | undefined,
+  rawPrompt: string,
+): { positivePrompt: string; negativePrompt: string } {
+  if (!spec) {
+    const isNude =
+      /\b(nude|naked|unclothed|no underwear|no thong|bare skin|genital|penis|vulva|breasts)\b/i.test(
+        rawPrompt,
+      );
+    return {
+      positivePrompt: rawPrompt.trim(),
+      negativePrompt: isNude
+        ? "thong, underwear, briefs, panties, swimwear, bikini, trunks, lingerie, clothing, censored, mosaic, blur"
+        : "",
+    };
+  }
+  const combined = `${spec.attireState} ${spec.subject} ${rawPrompt}`;
+  const isNude =
+    /\b(nude|naked|unclothed|no underwear|no thong|bare skin|genital|penis|vulva|breasts)\b/i.test(
+      combined,
+    );
+  const posParts = [
+    spec.styleAndMedium,
+    spec.subject,
+    isNude ? `${spec.attireState}, completely unclothed, bare skin` : spec.attireState,
+    spec.poseAndAction,
+    spec.cameraAndFraming,
+    spec.environmentAndLighting,
+  ]
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const negSet = new Set<string>(spec.mustAvoid.map((s) => s.trim()).filter(Boolean));
+  if (isNude) {
+    for (const item of [
+      "thong",
+      "underwear",
+      "briefs",
+      "panties",
+      "swimwear",
+      "bikini",
+      "trunks",
+      "lingerie",
+      "clothing",
+      "censored",
+      "mosaic",
+      "blur",
+    ]) {
+      negSet.add(item);
+    }
+  }
+  return {
+    positivePrompt: posParts.join(", "),
+    negativePrompt: [...negSet].join(", "),
+  };
 }
 
 async function saveGenerated(prefix: string, ext: string, bytes: Uint8Array): Promise<string> {
@@ -41,7 +126,7 @@ async function saveGenerated(prefix: string, ext: string, bytes: Uint8Array): Pr
   return fullPath;
 }
 
-async function runGeminiImage(parts: Array<Record<string, unknown>>, prefix: string) {
+async function _runGeminiImage(parts: Array<Record<string, unknown>>, prefix: string) {
   const apiKey = process.env.GOOGLE_API_KEY?.trim() ?? "";
   if (!apiKey) return { ok: false, error: "No GOOGLE_API_KEY configured" };
   let lastError = "No image models succeeded";
@@ -149,37 +234,36 @@ export function mediaTools() {
 
     defineTool({
       name: "generate_image",
-      description: "Generate a new AI image from a text prompt and save it to disk.",
+      description:
+        "Extract the user request into a structured sceneSpec and compile it into a deterministic ComfyUI generation prompt to render a new local image. ONLY call when the user explicitly requests creating a new image—NEVER call when the user asks why an existing image looks wrong or asks a diagnostic question.",
       parameters: z.object({
-        prompt: z.string().min(1).max(2000),
+        prompt: z.string().min(1).max(2000).describe("Original user image request"),
+        sceneSpec: sceneSpecSchema.describe(
+          "Structured breakdown of subject, attire/nudity state, pose, framing, lighting, style, and exclusions",
+        ),
         aspectRatio: z.enum(["1:1", "16:9", "9:16", "4:3", "3:4"]).default("1:1"),
       }),
-      execute: async ({ prompt, aspectRatio }) => {
+      execute: async ({ prompt, sceneSpec, aspectRatio }) => {
         try {
-          const png = await renderLocalZImage(prompt, aspectRatio);
+          const { positivePrompt, negativePrompt } = compileSceneSpec(sceneSpec, prompt);
+          const png = await renderLocalZImage(positivePrompt, aspectRatio, negativePrompt);
           const savedPath = await saveGenerated("image", "png", png);
-          await appendPromptHistory({ tool: "generate_image", prompt, savedPath });
-          return {
-            ok: true,
-            model: "z-image-turbo-bf16",
+          await appendPromptHistory({
+            tool: "generate_image",
+            prompt: `${positivePrompt}${negativePrompt ? ` [NEG: ${negativePrompt}]` : ""}`,
             savedPath,
-          };
-        } catch {
-          const g = await runGeminiImage(
-            [{ text: `${prompt}. Aspect ratio: ${aspectRatio}.` }],
-            "image",
-          );
-          if (g.ok) return g;
-          const w = aspectRatio === "16:9" ? 1280 : aspectRatio === "9:16" ? 720 : 1024;
-          const h = aspectRatio === "16:9" ? 720 : aspectRatio === "9:16" ? 1280 : 1024;
-          const res = await fetch(
-            `${pollinationsImageBase()}/${encodeURIComponent(prompt)}?width=${w}&height=${h}&seed=${Math.floor(Math.random() * 1e6)}&nologo=true`,
-          );
-          if (!res.ok) return { ok: false, error: `Fallback error (${res.status})` };
+          });
           return {
             ok: true,
-            model: "pollinations-flux-free",
-            savedPath: await saveGenerated("image", "jpg", new Uint8Array(await res.arrayBuffer())),
+            savedPath,
+            sceneSpec,
+            compiledPrompt: positivePrompt,
+            negativePrompt,
+          };
+        } catch (err) {
+          return {
+            ok: false,
+            error: `Local ComfyUI image error: ${err instanceof Error ? err.message : String(err)}`,
           };
         }
       },
@@ -188,6 +272,7 @@ export function mediaTools() {
     defineTool({
       name: "edit_image",
       description:
+        "ONLY call when the user explicitly asks to visually modify or edit an existing image—NEVER call when the user asks a question, requests file/app info, or discusses workflow steps." +
         "Modify or restyle an existing local image file. Automatically masks and preserves the full body and face when exact subject preservation or background/region masking is requested.",
       parameters: z.object({
         imagePath: z
@@ -217,18 +302,12 @@ export function mediaTools() {
           await appendPromptHistory({ tool: "edit_image", prompt, savedPath });
           await cleanupMask();
           return { ok: true, maskedInpaint: Boolean(maskPath), savedPath };
-        } catch {
+        } catch (err) {
           await cleanupMask();
-          const bytes = await readFile(abs);
-          const mimeType = abs.endsWith(".webp")
-            ? "image/webp"
-            : /.jpe?g$/i.test(abs)
-              ? "image/jpeg"
-              : "image/png";
-          return runGeminiImage(
-            [{ inlineData: { mimeType, data: bytes.toString("base64") } }, { text: prompt }],
-            "edited",
-          );
+          return {
+            ok: false,
+            error: `Local ComfyUI edit_image error: ${err instanceof Error ? err.message : String(err)}`,
+          };
         }
       },
     }),
@@ -882,37 +961,36 @@ export function createVisionTools() {
 
     defineTool({
       name: "generate_image",
-      description: "Generate a new AI image from a text prompt and save it to disk.",
+      description:
+        "Extract the user request into a structured sceneSpec and compile it into a deterministic ComfyUI generation prompt to render a new local image. ONLY call when the user explicitly requests creating a new image—NEVER call when the user asks why an existing image looks wrong or asks a diagnostic question.",
       parameters: z.object({
-        prompt: z.string().min(1).max(2000),
+        prompt: z.string().min(1).max(2000).describe("Original user image request"),
+        sceneSpec: sceneSpecSchema.describe(
+          "Structured breakdown of subject, attire/nudity state, pose, framing, lighting, style, and exclusions",
+        ),
         aspectRatio: z.enum(["1:1", "16:9", "9:16", "4:3", "3:4"]).default("1:1"),
       }),
-      execute: async ({ prompt, aspectRatio }) => {
+      execute: async ({ prompt, sceneSpec, aspectRatio }) => {
         try {
-          const png = await renderLocalZImage(prompt, aspectRatio);
+          const { positivePrompt, negativePrompt } = compileSceneSpec(sceneSpec, prompt);
+          const png = await renderLocalZImage(positivePrompt, aspectRatio, negativePrompt);
           const savedPath = await saveGenerated("image", "png", png);
-          await appendPromptHistory({ tool: "generate_image", prompt, savedPath });
-          return {
-            ok: true,
-            model: "z-image-turbo-bf16",
+          await appendPromptHistory({
+            tool: "generate_image",
+            prompt: `${positivePrompt}${negativePrompt ? ` [NEG: ${negativePrompt}]` : ""}`,
             savedPath,
-          };
-        } catch {
-          const g = await runGeminiImage(
-            [{ text: `${prompt}. Aspect ratio: ${aspectRatio}.` }],
-            "image",
-          );
-          if (g.ok) return g;
-          const w = aspectRatio === "16:9" ? 1280 : aspectRatio === "9:16" ? 720 : 1024;
-          const h = aspectRatio === "16:9" ? 720 : aspectRatio === "9:16" ? 1280 : 1024;
-          const res = await fetch(
-            `${pollinationsImageBase()}/${encodeURIComponent(prompt)}?width=${w}&height=${h}&seed=${Math.floor(Math.random() * 1e6)}&nologo=true`,
-          );
-          if (!res.ok) return { ok: false, error: `Fallback error (${res.status})` };
+          });
           return {
             ok: true,
-            model: "pollinations-flux-free",
-            savedPath: await saveGenerated("image", "jpg", new Uint8Array(await res.arrayBuffer())),
+            savedPath,
+            sceneSpec,
+            compiledPrompt: positivePrompt,
+            negativePrompt,
+          };
+        } catch (err) {
+          return {
+            ok: false,
+            error: `Local ComfyUI image error: ${err instanceof Error ? err.message : String(err)}`,
           };
         }
       },
@@ -921,6 +999,7 @@ export function createVisionTools() {
     defineTool({
       name: "edit_image",
       description:
+        "ONLY call when the user explicitly asks to visually modify or edit an existing image—NEVER call when the user asks a question, requests file/app info, or discusses workflow steps." +
         "Modify or restyle an existing local image file. Automatically masks and preserves the full body and face when exact subject preservation or background/region masking is requested.",
       parameters: z.object({
         imagePath: z
@@ -950,18 +1029,12 @@ export function createVisionTools() {
           await appendPromptHistory({ tool: "edit_image", prompt, savedPath });
           await cleanupMask();
           return { ok: true, maskedInpaint: Boolean(maskPath), savedPath };
-        } catch {
+        } catch (err) {
           await cleanupMask();
-          const bytes = await readFile(abs);
-          const mimeType = abs.endsWith(".webp")
-            ? "image/webp"
-            : /.jpe?g$/i.test(abs)
-              ? "image/jpeg"
-              : "image/png";
-          return runGeminiImage(
-            [{ inlineData: { mimeType, data: bytes.toString("base64") } }, { text: prompt }],
-            "edited",
-          );
+          return {
+            ok: false,
+            error: `Local ComfyUI edit_image error: ${err instanceof Error ? err.message : String(err)}`,
+          };
         }
       },
     }),

@@ -304,6 +304,37 @@ function ComfyLogDock({
   const [logOpen, setLogOpen] = useState(true);
   const [paused, setPaused] = useState(false);
   const [logLevel, setLogLevel] = useState<"all" | "info" | "warn" | "error">("all");
+  const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
+  const [showMuted, setShowMuted] = useState(false);
+  const [mutedPatterns, setMutedPatterns] = useState<string[]>(() => {
+    try {
+      const raw =
+        typeof localStorage !== "undefined" ? localStorage.getItem("openmuse_muted_logs") : null;
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  });
+  const toMuteSig = (line: string) =>
+    line
+      .replace(/^\[\d{2}:\d{2}:\d{2}\]\s*/, "")
+      .replace(/0x[0-9a-fA-F]+/g, "0x*")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 140);
+  const saveMuted = (next: string[]) => {
+    setMutedPatterns(next);
+    try {
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem("openmuse_muted_logs", JSON.stringify(next));
+      }
+    } catch {}
+  };
+  const isLineMuted = (line: string) => {
+    const sig = toMuteSig(line);
+    return mutedPatterns.some((p) => sig.includes(p) || p.includes(sig));
+  };
   const [ctrl, setCtrl] = useState<ComfyControlState>({
     lines: [],
     vramUsedGb: 0,
@@ -662,25 +693,66 @@ function ComfyLogDock({
           </Text>
         </Pressable>
         {logOpen ? (
-          <Pressable
-            onPress={() => setPaused((p) => !p)}
-            style={{
-              paddingHorizontal: 7,
-              paddingVertical: 3,
-              borderRadius: 8,
-              backgroundColor: colors.canvas,
-            }}
-          >
-            <Text
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+            {mutedPatterns.length > 0 ? (
+              <Pressable
+                onPress={() => setShowMuted((v) => !v)}
+                style={{
+                  paddingHorizontal: 7,
+                  paddingVertical: 3,
+                  borderRadius: 8,
+                  backgroundColor: showMuted ? colors.blueDark : colors.canvas,
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 10,
+                    fontWeight: "700",
+                    color: showMuted ? "#FFFFFF" : colors.muted,
+                  }}
+                >
+                  {showMuted
+                    ? `Hide Muted (${mutedPatterns.length})`
+                    : `Muted (${mutedPatterns.length})`}
+                </Text>
+              </Pressable>
+            ) : null}
+            {showMuted && mutedPatterns.length > 0 ? (
+              <Pressable
+                onPress={() => {
+                  saveMuted([]);
+                  setShowMuted(false);
+                }}
+                style={{
+                  paddingHorizontal: 6,
+                  paddingVertical: 3,
+                  borderRadius: 8,
+                  backgroundColor: colors.canvas,
+                }}
+              >
+                <Text style={{ fontSize: 10, fontWeight: "600", color: colors.danger }}>Clear</Text>
+              </Pressable>
+            ) : null}
+            <Pressable
+              onPress={() => setPaused((p) => !p)}
               style={{
-                fontSize: 10.5,
-                fontWeight: "600",
-                color: paused ? colors.orange : colors.muted,
+                paddingHorizontal: 7,
+                paddingVertical: 3,
+                borderRadius: 8,
+                backgroundColor: colors.canvas,
               }}
             >
-              {paused ? "Resume" : "Pause"}
-            </Text>
-          </Pressable>
+              <Text
+                style={{
+                  fontSize: 10.5,
+                  fontWeight: "600",
+                  color: paused ? colors.orange : colors.muted,
+                }}
+              >
+                {paused ? "Resume" : "Pause"}
+              </Text>
+            </Pressable>
+          </View>
         ) : null}
       </View>
 
@@ -734,10 +806,12 @@ function ComfyLogDock({
                 paddingHorizontal: 2,
               }}
             >
-              <Text style={{ fontSize: 9.5, fontWeight: "600", color: "#38BDF8" }}>● ComfyUI</Text>
-              <Text style={{ fontSize: 9.5, fontWeight: "600", color: "#4ADE80" }}>● LLM</Text>
-              <Text style={{ fontSize: 9.5, fontWeight: "600", color: "#C084FC" }}>● Vision</Text>
-              <Text style={{ fontSize: 9.5, fontWeight: "600", color: "#E2E8F0" }}>● Studio</Text>
+              <Text style={{ fontSize: 9.5, fontWeight: "700", color: "#22C55E" }}>● [INFO]</Text>
+              <Text style={{ fontSize: 9.5, fontWeight: "700", color: "#FACC15" }}>
+                ● [WARNING]
+              </Text>
+              <Text style={{ fontSize: 9.5, fontWeight: "700", color: "#EF4444" }}>● [ERROR]</Text>
+              <Text style={{ fontSize: 9.5, fontWeight: "600", color: "#F4F4F5" }}>● Log Text</Text>
             </View>
           </View>
           <ScrollView
@@ -749,6 +823,7 @@ function ComfyLogDock({
           >
             {ctrl.lines
               .filter((entry) => {
+                if (!showMuted && isLineMuted(entry.text)) return false;
                 const isErr = /\berror\b|traceback|exception|\bfailed\b/i.test(entry.text);
                 const isWarn = !isErr && /\bwarn(?:ing)?\b|\[warn/i.test(entry.text);
                 if (logLevel === "error") return isErr;
@@ -758,26 +833,75 @@ function ComfyLogDock({
               })
               .map((entry) => {
                 const t = entry.text;
-                const color = /llama|qwen3-8b|qwen3-14b|slot /i.test(t)
-                  ? "#4ADE80"
-                  : /qwen2\.5-vl|seamlessclone|copy_region/i.test(t)
-                    ? "#C084FC"
-                    : /openmuse|ffmpeg|tts/i.test(t)
-                      ? "#E2E8F0"
-                      : "#38BDF8";
+                const tagMatch = t.match(
+                  /^(\[(?:INFO|WARNING|WARN|ERROR|START|DONE)\]|Warning:|Error:|RuntimeError:|Traceback)/i,
+                );
+                const tag = tagMatch ? tagMatch[1] : "";
+                const rest = tag ? t.slice(tag.length) : t;
+                const tagColor = /error|traceback/i.test(tag)
+                  ? "#EF4444"
+                  : /warn/i.test(tag)
+                    ? "#FACC15"
+                    : "#22C55E";
+                const muted = isLineMuted(t);
+                const selected = selectedLogId === entry.id;
                 return (
-                  <Text
+                  <Pressable
                     key={entry.id}
+                    onPress={() => setSelectedLogId(selected ? null : entry.id)}
                     style={{
-                      fontSize: 10.5,
-                      lineHeight: 15,
-                      fontFamily: "monospace",
-                      color,
+                      flexDirection: "row",
+                      alignItems: "flex-start",
+                      justifyContent: "space-between",
+                      gap: 6,
+                      paddingHorizontal: selected ? 4 : 0,
+                      paddingVertical: selected ? 2 : 0,
+                      borderRadius: 4,
+                      backgroundColor: selected ? "rgba(59,130,246,0.18)" : "transparent",
+                      opacity: muted ? 0.5 : 1,
                       marginBottom: 2,
                     }}
                   >
-                    {t}
-                  </Text>
+                    <Text
+                      style={{
+                        flex: 1,
+                        fontSize: 10.5,
+                        lineHeight: 15,
+                        fontFamily: "monospace",
+                        color: "#F4F4F5",
+                      }}
+                    >
+                      {tag ? (
+                        <Text style={{ fontWeight: "700", color: tagColor }}>{tag}</Text>
+                      ) : null}
+                      {rest}
+                    </Text>
+                    {selected ? (
+                      <Pressable
+                        onPress={() => {
+                          const sig = toMuteSig(t);
+                          if (muted) {
+                            saveMuted(
+                              mutedPatterns.filter((p) => !sig.includes(p) && !p.includes(sig)),
+                            );
+                          } else if (sig) {
+                            saveMuted([...new Set([...mutedPatterns, sig])]);
+                          }
+                          setSelectedLogId(null);
+                        }}
+                        style={{
+                          paddingHorizontal: 6,
+                          paddingVertical: 1,
+                          borderRadius: 5,
+                          backgroundColor: muted ? "#1D4ED8" : "#3F3F46",
+                        }}
+                      >
+                        <Text style={{ fontSize: 9.5, fontWeight: "700", color: "#FFFFFF" }}>
+                          {muted ? "Unmute" : "Mute"}
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                  </Pressable>
                 );
               })}
           </ScrollView>

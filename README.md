@@ -14,7 +14,7 @@ Local-first AI media production workstation combining a symmetric 3-column studi
 
 | Tool Name | Backend Engine | Core Capability |
 | :--- | :--- | :--- |
-| `generate_image` | `FLUX.1-dev` / `Z-Image-Turbo` | 100% local text-to-image generation (no silent cloud fallbacks or watermarks) with automatic prompt logging. |
+| `generate_image` | `FLUX.1-dev` / `Z-Image-Turbo` + `LoraLoader` | Extracts requests into a structured `sceneSpec`, compiles deterministic ComfyUI prompts/exclusions, and applies architecture-verified LoRAs 100% locally. |
 | `edit_image` | `FLUX.1-Kontext-dev` + `SetLatentNoiseMask` | Pixel-locked attribute/style editing with `ReferenceLatent` and `ImageCompositeMasked`. |
 | `remove_object` | `Qwen2.5-VL` + `FLUX.1-dev` (`denoise: 1.0`) | Clean-plate object/watermark removal without `ReferenceLatent` ghosting. |
 | `generate_video` / `animate_image` | `LTX-2.3` (22B Distilled) | T2V and I2V MP4 generation with audio up to 180s and `"exact"` identity lock. |
