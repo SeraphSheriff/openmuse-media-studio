@@ -908,7 +908,7 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
                                 const isPrimary = curVal === file;
                                 const selected = isPrimary || extraIdx >= 0;
                                 const strength = isPrimary
-                                  ? Number(data.settings.loraStrength ?? 0.75)
+                                  ? Number(data.settings.imageLoraStrength ?? 0.75)
                                   : extraIdx >= 0
                                     ? Number(extras[extraIdx].strength ?? 0.75)
                                     : 0.75;
@@ -923,9 +923,9 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
                                           settings: {
                                             ...prev.settings,
                                             activeImageLora: head ? head.name : "",
-                                            loraStrength: head
+                                            imageLoraStrength: head
                                               ? head.strength
-                                              : prev.settings.loraStrength,
+                                              : prev.settings.imageLoraStrength,
                                             extraLoras: JSON.stringify(rest),
                                           },
                                         }
@@ -939,7 +939,9 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
                                       ? [
                                           {
                                             name: curVal,
-                                            strength: Number(data.settings.loraStrength ?? 0.75),
+                                            strength: Number(
+                                              data.settings.imageLoraStrength ?? 0.75,
+                                            ),
                                           },
                                         ]
                                       : []),
@@ -961,7 +963,9 @@ export function VideoSettingsModal({ onClose }: { onClose: () => void }) {
                                       ? [
                                           {
                                             name: curVal,
-                                            strength: Number(data.settings.loraStrength ?? 0.75),
+                                            strength: Number(
+                                              data.settings.imageLoraStrength ?? 0.75,
+                                            ),
                                           },
                                         ]
                                       : []),

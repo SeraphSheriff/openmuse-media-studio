@@ -239,15 +239,13 @@ async function resolveCompatibleImageLoras(
   engine: string,
 ): Promise<ActiveLora[]> {
   const candidates: ActiveLora[] = [];
-  const pStr = Number(cfg.loraStrength);
-  for (const key of ["activeImageLora", "loraName"] as const) {
-    const raw = typeof cfg[key] === "string" ? String(cfg[key]).trim() : "";
-    if (raw && !candidates.some((c) => c.loraName === raw)) {
-      candidates.push({
-        loraName: raw,
-        loraStrength: Number.isFinite(pStr) && pStr > 0 ? Math.min(2, pStr) : 0.75,
-      });
-    }
+  const pStr = Number(cfg.imageLoraStrength ?? 0.75);
+  const raw = typeof cfg.activeImageLora === "string" ? cfg.activeImageLora.trim() : "";
+  if (raw) {
+    candidates.push({
+      loraName: raw,
+      loraStrength: Number.isFinite(pStr) && pStr > 0 ? Math.min(2, pStr) : 0.75,
+    });
   }
   try {
     const rawExtra =
