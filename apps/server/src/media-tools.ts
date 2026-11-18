@@ -803,20 +803,60 @@ export function mediaTools() {
       execute: async ({ inputPath, outputExt, ffmpegArgs }) => {
         await mkdir(GEN_DIR, { recursive: true });
         const outPath = join(GEN_DIR, `modified-${Date.now()}.${outputExt}`);
+        const preInputArgs: string[] = [];
+        const postInputArgs: string[] = [];
+        for (let i = 0; i < ffmpegArgs.length; i += 1) {
+          const arg = ffmpegArgs[i];
+          if (arg === "-stream_loop" && i + 1 < ffmpegArgs.length) {
+            preInputArgs.push("-stream_loop", String(ffmpegArgs[i + 1]));
+            i += 1;
+          } else if (arg !== undefined) {
+            postInputArgs.push(arg);
+          }
+        }
         const mp4Defaults =
-          outputExt === "mp4"
+          outputExt === "mp4" && !postInputArgs.includes("-c:v")
             ? ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
             : [];
         try {
           await execFileAsync("ffmpeg", [
             "-y",
+            ...preInputArgs,
             "-i",
             resolveMediaPath(inputPath),
-            ...ffmpegArgs,
+            ...postInputArgs,
             ...mp4Defaults,
             outPath,
           ]);
-          return { ok: true, savedPath: outPath };
+          let durationSeconds: number | undefined;
+          let resolution: string | undefined;
+          try {
+            const { stdout } = await execFileAsync("ffprobe", [
+              "-v",
+              "error",
+              "-select_streams",
+              "v:0",
+              "-show_entries",
+              "stream=width,height:format=duration",
+              "-of",
+              "json",
+              outPath,
+            ]);
+            const probe = JSON.parse(stdout) as {
+              streams?: Array<{ width?: number; height?: number }>;
+              format?: { duration?: string };
+            };
+            const dur = Number(probe.format?.duration);
+            if (Number.isFinite(dur) && dur > 0) durationSeconds = Math.round(dur * 100) / 100;
+            const st = probe.streams?.[0];
+            if (st?.width && st?.height) resolution = `${st.width}x${st.height}`;
+          } catch {}
+          return {
+            ok: true,
+            savedPath: outPath,
+            ...(durationSeconds !== undefined ? { durationSeconds } : {}),
+            ...(resolution ? { resolution } : {}),
+          };
         } catch (err) {
           return { ok: false, error: err instanceof Error ? err.message : "ffmpeg failed" };
         }
@@ -1480,20 +1520,60 @@ export function createVisionTools() {
       execute: async ({ inputPath, outputExt, ffmpegArgs }) => {
         await mkdir(GEN_DIR, { recursive: true });
         const outPath = join(GEN_DIR, `modified-${Date.now()}.${outputExt}`);
+        const preInputArgs: string[] = [];
+        const postInputArgs: string[] = [];
+        for (let i = 0; i < ffmpegArgs.length; i += 1) {
+          const arg = ffmpegArgs[i];
+          if (arg === "-stream_loop" && i + 1 < ffmpegArgs.length) {
+            preInputArgs.push("-stream_loop", String(ffmpegArgs[i + 1]));
+            i += 1;
+          } else if (arg !== undefined) {
+            postInputArgs.push(arg);
+          }
+        }
         const mp4Defaults =
-          outputExt === "mp4"
+          outputExt === "mp4" && !postInputArgs.includes("-c:v")
             ? ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
             : [];
         try {
           await execFileAsync("ffmpeg", [
             "-y",
+            ...preInputArgs,
             "-i",
             resolveMediaPath(inputPath),
-            ...ffmpegArgs,
+            ...postInputArgs,
             ...mp4Defaults,
             outPath,
           ]);
-          return { ok: true, savedPath: outPath };
+          let durationSeconds: number | undefined;
+          let resolution: string | undefined;
+          try {
+            const { stdout } = await execFileAsync("ffprobe", [
+              "-v",
+              "error",
+              "-select_streams",
+              "v:0",
+              "-show_entries",
+              "stream=width,height:format=duration",
+              "-of",
+              "json",
+              outPath,
+            ]);
+            const probe = JSON.parse(stdout) as {
+              streams?: Array<{ width?: number; height?: number }>;
+              format?: { duration?: string };
+            };
+            const dur = Number(probe.format?.duration);
+            if (Number.isFinite(dur) && dur > 0) durationSeconds = Math.round(dur * 100) / 100;
+            const st = probe.streams?.[0];
+            if (st?.width && st?.height) resolution = `${st.width}x${st.height}`;
+          } catch {}
+          return {
+            ok: true,
+            savedPath: outPath,
+            ...(durationSeconds !== undefined ? { durationSeconds } : {}),
+            ...(resolution ? { resolution } : {}),
+          };
         } catch (err) {
           return { ok: false, error: err instanceof Error ? err.message : "ffmpeg failed" };
         }
