@@ -453,8 +453,29 @@ export class ConversationAgent extends AbstractAgent {
     });
     return this.expireOnUserTurn(
       new Observable((subscriber) => {
+        const trimmedMessages = (() => {
+          if (!activeBaseUrl) return input.messages;
+          const maxChars = 60_000;
+          const sys = input.messages.filter((m) => m.role === "system");
+          const nonSys = input.messages.filter((m) => m.role !== "system");
+          let used = sys.reduce((acc, m) => acc + JSON.stringify(m).length, 0);
+          const kept: typeof nonSys = [];
+          for (let i = nonSys.length - 1; i >= 0; i -= 1) {
+            const msg = nonSys[i]!;
+            const len = JSON.stringify(msg).length;
+            if (kept.length > 0 && used + len > maxChars) break;
+            kept.unshift(msg);
+            used += len;
+          }
+          while (kept.length > 1 && kept[0]?.role === "tool") kept.shift();
+          return [...sys, ...kept];
+        })();
         const subscription = agent
-          .run({ ...input, tools: input.tools.filter((t) => t.name === "open_workspace") })
+          .run({
+            ...input,
+            messages: trimmedMessages,
+            tools: input.tools.filter((t) => t.name === "open_workspace"),
+          })
           .subscribe(subscriber);
         return () => {
           browserAbort.abort();

@@ -85,7 +85,25 @@ async function ensureLlamaServer(modelPath: string, baseUrl: string): Promise<vo
   const logFd = openSync("/tmp/openmuse-llama.log", "a");
   const child = spawn(
     "llama-server",
-    ["-m", modelPath, "--host", host, "--port", port, "-ngl", "99", "-c", "16384", "--jinja"],
+    [
+      "-m",
+      modelPath,
+      "--host",
+      host,
+      "--port",
+      port,
+      "-ngl",
+      "99",
+      "-c",
+      "32768",
+      "-fa",
+      "on",
+      "-ctk",
+      "q8_0",
+      "-ctv",
+      "q8_0",
+      "--jinja",
+    ],
     { detached: true, stdio: ["ignore", logFd, logFd] },
   );
   child.unref();
