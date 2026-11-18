@@ -461,7 +461,8 @@ export class ConversationAgent extends AbstractAgent {
           let used = sys.reduce((acc, m) => acc + JSON.stringify(m).length, 0);
           const kept: typeof nonSys = [];
           for (let i = nonSys.length - 1; i >= 0; i -= 1) {
-            const msg = nonSys[i]!;
+            const msg = nonSys[i];
+            if (!msg) continue;
             const len = JSON.stringify(msg).length;
             if (kept.length > 0 && used + len > maxChars) break;
             kept.unshift(msg);
