@@ -86,13 +86,22 @@ export async function createApp(
       credentials: true,
     }),
   );
-  app.use(
-    "*",
-    bodyLimit({
-      maxSize: 12 * 1024 * 1024,
-      onError: (c) => c.json({ error: "Request is too large; PDFs must be 10 MB or smaller" }, 413),
-    }),
-  );
+  app.use("*", async (c, next) => {
+    const limit = c.req.path === "/api/media-upload" ? 300 * 1024 * 1024 : 12 * 1024 * 1024;
+    return bodyLimit({
+      maxSize: limit,
+      onError: (ctx) =>
+        ctx.json(
+          {
+            error:
+              c.req.path === "/api/media-upload"
+                ? "Media file exceeds 300 MB upload limit"
+                : "Request is too large; PDFs must be 10 MB or smaller",
+          },
+          413,
+        ),
+    })(c, next);
+  });
   const apiRateLimit = rateLimit(Boolean(config.trustProxy));
   app.use("/api/*", async (c, next) => {
     const p = c.req.path;

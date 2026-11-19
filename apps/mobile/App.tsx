@@ -1011,6 +1011,7 @@ function MediaGalleryDock({
   const [copiedName, setCopiedName] = useState("");
   const [promptsView, setPromptsView] = useState(false);
   const [dropzoneOpen, setDropzoneOpen] = useState(true);
+  const [uploadError, setUploadError] = useState("");
   const [refreshLabel, setRefreshLabel] = useState("Refresh");
   const [promptHistory, setPromptHistory] = useState<PromptHistoryEntry[]>([]);
   const [expandedPromptName, setExpandedPromptName] = useState("");
@@ -1075,6 +1076,7 @@ function MediaGalleryDock({
   const uploadFiles = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
     setUploading(true);
+    setUploadError("");
     try {
       for (const file of Array.from(fileList)) {
         const dataBase64 = await new Promise<string>((res, rej) => {
@@ -1095,8 +1097,11 @@ function MediaGalleryDock({
         }
       }
       refresh();
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "Upload failed");
     } finally {
       setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
   if (!open)
@@ -1250,7 +1255,11 @@ function MediaGalleryDock({
                 fontWeight: 600,
               }}
             >
-              {uploading ? "Uploading to generated/…" : "Drop images, videos, or audio here"}
+              {uploading
+                ? "Uploading to generated/…"
+                : uploadError
+                  ? `Upload error: ${uploadError}`
+                  : "Drop images, videos, or audio here"}
               {copiedName ? (
                 <div style={{ fontSize: 10, color: "#10B981", marginTop: 4 }}>
                   Saved & copied: {copiedName}
